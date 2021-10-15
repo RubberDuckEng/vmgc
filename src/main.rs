@@ -33,6 +33,11 @@ impl Space {
         }
     }
 
+    fn clear(&mut self) {
+        // TODO: Return memory to the system.
+        self.next = self.base;
+    }
+
     fn alloc(&mut self, size: usize) -> Result<*mut u8, GCError> {
         unsafe {
             let allocated = self.used();
@@ -41,6 +46,7 @@ impl Space {
             }
             let result = self.next;
             self.next = result.add(size);
+            result.write_bytes(0, size);
             Ok(result)
         }
     }
@@ -81,13 +87,28 @@ impl Heap {
         self.from_space.used() + self.to_space.used()
     }
 
-    pub fn collect(&self) {}
+    pub fn collect(&mut self) {
+        let mut inner = self.inner.borrow_mut();
+        for maybe_cell in inner.cells.iter_mut() {
+            if let Some(cell) = maybe_cell {
+                // TODO: Get the size from the object header
+                // TODO: Trace the object graph.
+                let object_size = Number::size();
+                let new_ptr = self.to_space.alloc(object_size).unwrap();
+                unsafe {
+                    std::ptr::copy_nonoverlapping(cell.ptr, new_ptr, object_size);
+                }
+                cell.ptr = new_ptr;
+            }
+        }
+        std::mem::swap(&mut self.from_space, &mut self.to_space);
+        self.to_space.clear();
+    }
 
     pub fn allocate<T: Traceable>(&mut self) -> Result<GlobalHandle, GCError> {
         let size = T::size();
         // TODO: We're going to need a header.
         let ptr = self.from_space.alloc(size)?;
-        T::init(ptr);
         Ok(self.alloc_handle(ptr))
     }
 
@@ -119,7 +140,6 @@ impl Drop for GlobalHandle {
 
 trait Traceable {
     fn size() -> usize;
-    fn init(ptr: *mut u8);
 }
 
 #[derive(Debug)]
@@ -128,10 +148,6 @@ struct Number {}
 impl Traceable for Number {
     fn size() -> usize {
         4
-    }
-
-    fn init(ptr: *mut u8) {
-        unsafe { ptr.write_bytes(0, Self::size()) }
     }
 }
 
