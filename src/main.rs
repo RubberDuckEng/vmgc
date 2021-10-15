@@ -57,7 +57,7 @@ struct HeapCell {
 
 #[derive(Debug, Default)]
 struct HeapInner {
-    cells: Vec<HeapCell>,
+    cells: Vec<Option<HeapCell>>,
 }
 
 #[derive(Debug)]
@@ -95,7 +95,7 @@ impl Heap {
         let index = {
             let mut inner = self.inner.borrow_mut();
             let index = inner.cells.len();
-            inner.cells.push(HeapCell { ptr });
+            inner.cells.push(Some(HeapCell { ptr }));
             index
         };
         GlobalHandle {
@@ -113,7 +113,7 @@ struct GlobalHandle {
 
 impl Drop for GlobalHandle {
     fn drop(&mut self) {
-        self.inner.borrow_mut().cells[self.index].ptr = std::ptr::null();
+        self.inner.borrow_mut().cells[self.index] = None;
     }
 }
 
