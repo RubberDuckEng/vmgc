@@ -6,8 +6,15 @@ use std::sync::Arc;
 
 #[derive(Debug)]
 enum GCError {
-    OOM,
+    // The operating system did not provide use with memory.
+    OSOutOfMemory,
+
+    // There is no memory left in this space.
     NoSpace,
+
+    // There is no space left in the heap to allocate this object, even after
+    // collecting dead objects.
+    HeapFull,
 }
 
 #[derive(Debug)]
@@ -20,10 +27,12 @@ struct Space {
 impl Space {
     fn new(size: usize) -> Result<Space, GCError> {
         unsafe {
+            // TODO: Should we allocte on a 4k boundary? Might have implications
+            // for returning memory to the system.
             let layout = Layout::from_size_align_unchecked(size, 0x1000);
             let ptr = alloc(layout);
             if ptr.is_null() {
-                return Err(GCError::OOM);
+                return Err(GCError::OSOutOfMemory);
             }
             Ok(Space {
                 base: ptr,
@@ -38,6 +47,7 @@ impl Space {
         self.next = self.base;
     }
 
+    // TODO: The client should be able to specify the alignment.
     fn alloc(&mut self, size: usize) -> Result<*mut u8, GCError> {
         unsafe {
             let allocated = self.used();
@@ -68,6 +78,7 @@ struct HeapInner {
 
 #[derive(Debug)]
 struct Heap {
+    // TODO: Add more generations.
     from_space: Space,
     to_space: Space,
     inner: Arc<RefCell<HeapInner>>,
@@ -108,12 +119,14 @@ impl Heap {
     pub fn allocate<T: Traceable>(&mut self) -> Result<GlobalHandle, GCError> {
         let size = T::size();
         // TODO: We're going to need a header.
+        // TODO: If we're out of space, we should collect.
         let ptr = self.from_space.alloc(size)?;
         Ok(self.alloc_handle(ptr))
     }
 
     fn alloc_handle(&self, ptr: *const u8) -> GlobalHandle {
         let index = {
+            // TODO: Scan for available cells.
             let mut inner = self.inner.borrow_mut();
             let index = inner.cells.len();
             inner.cells.push(Some(HeapCell { ptr }));
@@ -137,6 +150,8 @@ impl Drop for GlobalHandle {
         self.inner.borrow_mut().cells[self.index] = None;
     }
 }
+
+// TODO: Add HandleScope and LocalHandle.
 
 trait Traceable {
     fn size() -> usize;
