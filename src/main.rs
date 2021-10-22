@@ -75,7 +75,13 @@ impl Space {
 
 #[derive(Debug)]
 struct HeapCell {
-    ptr: *const u8,
+    ptr: *mut u8,
+}
+
+impl HeapCell {
+    fn header(&self) -> &mut ObjectHeader {
+        ObjectHeader::from_object_ptr(self.ptr)
+    }
 }
 
 #[derive(Debug, Default)]
@@ -91,8 +97,6 @@ struct Heap {
     to_space: Space,
     inner: Arc<RefCell<HeapInner>>,
 }
-
-const HEADER_SIZE: usize = std::mem::size_of::<ObjectHeader>();
 
 impl Heap {
     pub fn new(size: usize) -> Result<Heap, GCError> {
@@ -112,15 +116,14 @@ impl Heap {
         let mut inner = self.inner.borrow_mut();
         for maybe_cell in inner.cells.iter_mut() {
             if let Some(cell) = maybe_cell {
-                let header_ptr = unsafe { cell.ptr.sub(HEADER_SIZE) };
-                let header = unsafe { &*(header_ptr as *mut ObjectHeader) };
-                let alloc_size = HEADER_SIZE + header.object_size;
+                let header = cell.header();
+                let alloc_size = header.alloc_size();
                 // TODO: Trace the object graph.
                 let new_ptr = self.to_space.alloc(alloc_size).unwrap();
                 unsafe {
-                    std::ptr::copy_nonoverlapping(header_ptr, new_ptr, alloc_size);
+                    std::ptr::copy_nonoverlapping(header.as_ptr(), new_ptr, alloc_size);
                 }
-                cell.ptr = unsafe { new_ptr.add(HEADER_SIZE) };
+                cell.ptr = header.object_ptr();
             }
         }
         // TODO: Scan the Vec of weak pointers to see if any are pointing into
@@ -130,15 +133,11 @@ impl Heap {
     }
 
     pub fn allocate<T>(&mut self) -> Result<GlobalHandle<T>, GCError> {
-        let object_size = std::mem::size_of::<T>();
-        let alloc_size = HEADER_SIZE + object_size;
-        let ptr = self.from_space.alloc(alloc_size)?;
-        let mut header = unsafe { &mut *(ptr as *mut ObjectHeader) };
-        header.object_size = object_size;
-        Ok(self.alloc_handle::<T>(unsafe { ptr.add(HEADER_SIZE) }))
+        let header = ObjectHeader::new::<T>(&mut self.from_space)?;
+        Ok(self.alloc_handle::<T>(header.object_ptr()))
     }
 
-    fn alloc_handle<T>(&self, ptr: *const u8) -> GlobalHandle<T> {
+    fn alloc_handle<T>(&self, ptr: *mut u8) -> GlobalHandle<T> {
         let index = {
             // TODO: Scan for available cells.
             let mut inner = self.inner.borrow_mut();
@@ -174,7 +173,7 @@ impl<T> GlobalHandle<T> {
     // the reference is alive.
     fn get(&self) -> &T {
         let inner = self.inner.borrow();
-        let cell = &inner.cells[self.index].as_ref().unwrap();
+        let cell = inner.cells[self.index].as_ref().unwrap();
         unsafe { &*(cell.ptr as *const T) }
     }
 
@@ -182,7 +181,7 @@ impl<T> GlobalHandle<T> {
     // the reference is alive.
     fn get_mut(&mut self) -> &mut T {
         let inner = self.inner.borrow();
-        let cell = &inner.cells[self.index].as_ref().unwrap();
+        let cell = inner.cells[self.index].as_ref().unwrap();
         unsafe { &mut *(cell.ptr as *mut T) }
     }
 }
@@ -199,6 +198,42 @@ impl<T> Drop for GlobalHandle<T> {
 #[repr(C)]
 struct ObjectHeader {
     object_size: usize,
+}
+
+const HEADER_SIZE: usize = std::mem::size_of::<ObjectHeader>();
+
+impl ObjectHeader {
+    fn new<'a, T>(space: &mut Space) -> Result<&'a mut ObjectHeader, GCError> {
+        let object_size = std::mem::size_of::<T>();
+        let header_ptr = space.alloc(HEADER_SIZE + object_size)?;
+        let header = ObjectHeader::from_header_ptr(header_ptr);
+        header.object_size = object_size;
+        Ok(header)
+    }
+
+    fn from_header_ptr<'a>(header_ptr: *mut u8) -> &'a mut ObjectHeader {
+        unsafe { &mut *(header_ptr as *mut ObjectHeader) }
+    }
+
+    fn from_object_ptr<'a>(object_ptr: *mut u8) -> &'a mut ObjectHeader {
+        Self::from_header_ptr(unsafe { object_ptr.sub(HEADER_SIZE) })
+    }
+
+    fn alloc_size(&self) -> usize {
+        HEADER_SIZE + self.object_size
+    }
+
+    fn object_ptr(&mut self) -> *mut u8 {
+        unsafe { self.as_mut_ptr().add(HEADER_SIZE) }
+    }
+
+    fn as_ptr(&self) -> *const u8 {
+        self as *const ObjectHeader as *const u8
+    }
+
+    fn as_mut_ptr(&mut self) -> *mut u8 {
+        self as *mut ObjectHeader as *mut u8
+    }
 }
 
 #[derive(Debug)]
