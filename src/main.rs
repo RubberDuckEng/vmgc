@@ -273,6 +273,8 @@ struct Number {
     value: u64,
 }
 
+#[derive(Debug)]
+#[repr(C)]
 struct HostObject<T> {
     value_ptr: *mut T,
 }
