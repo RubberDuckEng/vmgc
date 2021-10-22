@@ -4,6 +4,12 @@ use std::alloc::{alloc, Layout};
 use std::cell::RefCell;
 use std::sync::Arc;
 
+// Things to do
+// 1. Make it possible to have different sized objects. (Object header)
+// 2. Make a second object type (not number, maybe string?)
+// 3. Make a host object with finalizer (start with weak pointer?)
+// 4. Make it possible to trace objects.
+
 #[derive(Debug)]
 enum GCError {
     // The operating system did not provide use with memory.
@@ -84,6 +90,8 @@ struct Heap {
     inner: Arc<RefCell<HeapInner>>,
 }
 
+const HEADER_SIZE: usize = std::mem::size_of::<ObjectHeader>();
+
 impl Heap {
     pub fn new(size: usize) -> Result<Heap, GCError> {
         let half_size = size / 2;
@@ -102,26 +110,30 @@ impl Heap {
         let mut inner = self.inner.borrow_mut();
         for maybe_cell in inner.cells.iter_mut() {
             if let Some(cell) = maybe_cell {
-                // TODO: Get the size from the object header
+                let header_ptr = unsafe { cell.ptr.sub(HEADER_SIZE) };
+                let header = unsafe { &*(header_ptr as *mut ObjectHeader) };
                 // TODO: Trace the object graph.
-                let object_size = Number::size();
-                let new_ptr = self.to_space.alloc(object_size).unwrap();
+                let new_ptr = self
+                    .to_space
+                    .alloc(HEADER_SIZE + header.object_size)
+                    .unwrap();
                 unsafe {
-                    std::ptr::copy_nonoverlapping(cell.ptr, new_ptr, object_size);
+                    std::ptr::copy_nonoverlapping(cell.ptr, new_ptr, header.object_size);
                 }
-                cell.ptr = new_ptr;
+                cell.ptr = unsafe { new_ptr.add(HEADER_SIZE) };
             }
         }
         std::mem::swap(&mut self.from_space, &mut self.to_space);
         self.to_space.clear();
     }
 
-    pub fn allocate<T: Traceable>(&mut self) -> Result<GlobalHandle, GCError> {
-        let size = T::size();
-        // TODO: We're going to need a header.
-        // TODO: If we're out of space, we should collect.
-        let ptr = self.from_space.alloc(size)?;
-        Ok(self.alloc_handle(ptr))
+    pub fn allocate<T>(&mut self) -> Result<GlobalHandle, GCError> {
+        let object_size = std::mem::size_of::<T>();
+        let alloc_size = HEADER_SIZE + object_size;
+        let ptr = self.from_space.alloc(alloc_size)?;
+        let mut header = unsafe { &mut *(ptr as *mut ObjectHeader) };
+        header.object_size = object_size;
+        Ok(self.alloc_handle(unsafe { ptr.add(HEADER_SIZE) }))
     }
 
     fn alloc_handle(&self, ptr: *const u8) -> GlobalHandle {
@@ -153,17 +165,16 @@ impl Drop for GlobalHandle {
 
 // TODO: Add HandleScope and LocalHandle.
 
-trait Traceable {
-    fn size() -> usize;
+#[derive(Debug)]
+#[repr(C)]
+struct ObjectHeader {
+    object_size: usize,
 }
 
 #[derive(Debug)]
-struct Number {}
-
-impl Traceable for Number {
-    fn size() -> usize {
-        4
-    }
+#[repr(C)]
+struct Number {
+    value: u64,
 }
 
 fn main() {
@@ -185,9 +196,12 @@ mod tests {
         let one = heap.allocate::<Number>().unwrap();
         let two = heap.allocate::<Number>().unwrap();
         std::mem::drop(one);
-        assert_eq!(heap.used(), Number::size() * 2);
+        assert_eq!(
+            heap.used(),
+            (HEADER_SIZE + std::mem::size_of::<Number>()) * 2
+        );
         heap.collect();
-        assert_eq!(heap.used(), Number::size());
+        assert_eq!(heap.used(), HEADER_SIZE + std::mem::size_of::<Number>());
         std::mem::drop(two);
     }
 }
