@@ -2,6 +2,7 @@
 
 use std::alloc::{alloc, Layout};
 use std::cell::RefCell;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 // Things to do
@@ -80,6 +81,7 @@ struct HeapCell {
 #[derive(Debug, Default)]
 struct HeapInner {
     cells: Vec<Option<HeapCell>>,
+    // TODO: Add Vec of weak pointers.
 }
 
 #[derive(Debug)]
@@ -112,31 +114,31 @@ impl Heap {
             if let Some(cell) = maybe_cell {
                 let header_ptr = unsafe { cell.ptr.sub(HEADER_SIZE) };
                 let header = unsafe { &*(header_ptr as *mut ObjectHeader) };
+                let alloc_size = HEADER_SIZE + header.object_size;
                 // TODO: Trace the object graph.
-                let new_ptr = self
-                    .to_space
-                    .alloc(HEADER_SIZE + header.object_size)
-                    .unwrap();
+                let new_ptr = self.to_space.alloc(alloc_size).unwrap();
                 unsafe {
-                    std::ptr::copy_nonoverlapping(cell.ptr, new_ptr, header.object_size);
+                    std::ptr::copy_nonoverlapping(header_ptr, new_ptr, alloc_size);
                 }
                 cell.ptr = unsafe { new_ptr.add(HEADER_SIZE) };
             }
         }
+        // TODO: Scan the Vec of weak pointers to see if any are pointing into
+        // the from_space. If so, call their callbacks.
         std::mem::swap(&mut self.from_space, &mut self.to_space);
         self.to_space.clear();
     }
 
-    pub fn allocate<T>(&mut self) -> Result<GlobalHandle, GCError> {
+    pub fn allocate<T>(&mut self) -> Result<GlobalHandle<T>, GCError> {
         let object_size = std::mem::size_of::<T>();
         let alloc_size = HEADER_SIZE + object_size;
         let ptr = self.from_space.alloc(alloc_size)?;
         let mut header = unsafe { &mut *(ptr as *mut ObjectHeader) };
         header.object_size = object_size;
-        Ok(self.alloc_handle(unsafe { ptr.add(HEADER_SIZE) }))
+        Ok(self.alloc_handle::<T>(unsafe { ptr.add(HEADER_SIZE) }))
     }
 
-    fn alloc_handle(&self, ptr: *const u8) -> GlobalHandle {
+    fn alloc_handle<T>(&self, ptr: *const u8) -> GlobalHandle<T> {
         let index = {
             // TODO: Scan for available cells.
             let mut inner = self.inner.borrow_mut();
@@ -147,17 +149,45 @@ impl Heap {
         GlobalHandle {
             inner: Arc::clone(&self.inner),
             index,
+            phantom: PhantomData::<T>::default(),
         }
+    }
+
+    fn take_object<T>(&mut self, value: Box<T>) -> Result<GlobalHandle<HostObject<T>>, GCError> {
+        let mut handle = self.allocate::<HostObject<T>>()?;
+        handle.get_mut().value_ptr = Box::into_raw(value);
+        // TODO: Register weak pointer for this host object whose callback uses
+        // Box::from_raw to tell Rust to take ownership of the memory again.
+        Ok(handle)
     }
 }
 
 #[derive(Debug)]
-struct GlobalHandle {
+struct GlobalHandle<T> {
     inner: Arc<RefCell<HeapInner>>,
     index: usize,
+    phantom: PhantomData<T>,
 }
 
-impl Drop for GlobalHandle {
+impl<T> GlobalHandle<T> {
+    // TODO: These should actually return a HeapRef<T> that prevents GC while
+    // the reference is alive.
+    fn get(&self) -> &T {
+        let inner = self.inner.borrow();
+        let cell = &inner.cells[self.index].as_ref().unwrap();
+        unsafe { &*(cell.ptr as *const T) }
+    }
+
+    // TODO: These should actually return a HeapRef<T> that prevents GC while
+    // the reference is alive.
+    fn get_mut(&mut self) -> &mut T {
+        let inner = self.inner.borrow();
+        let cell = &inner.cells[self.index].as_ref().unwrap();
+        unsafe { &mut *(cell.ptr as *mut T) }
+    }
+}
+
+impl<T> Drop for GlobalHandle<T> {
     fn drop(&mut self) {
         self.inner.borrow_mut().cells[self.index] = None;
     }
@@ -177,6 +207,10 @@ struct Number {
     value: u64,
 }
 
+struct HostObject<T> {
+    value_ptr: *mut T,
+}
+
 fn main() {
     // Allocate 2 objects
     // Hold a poitner to 1 of them.
@@ -186,8 +220,21 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    use std::cell::Cell;
+    use std::rc::Rc;
 
     use super::*;
+
+    struct DropObject {
+        counter: Rc<Cell<u32>>,
+    }
+
+    impl Drop for DropObject {
+        fn drop(&mut self) {
+            let counter = self.counter.get();
+            self.counter.set(counter + 1);
+        }
+    }
 
     #[test]
     fn smoke_test() {
@@ -204,4 +251,21 @@ mod tests {
         assert_eq!(heap.used(), HEADER_SIZE + std::mem::size_of::<Number>());
         std::mem::drop(two);
     }
+
+    #[test]
+    fn finalizer_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        let counter = Rc::new(Cell::new(0));
+        let host = Box::new(DropObject {
+            counter: Rc::clone(&counter),
+        });
+
+        let handle = heap.take_object(host);
+        std::mem::drop(handle);
+        assert_eq!(0u32, counter.get());
+        heap.collect();
+        assert_eq!(1u32, counter.get());
+    }
+
+    // TODO: Write a test that adds two numbers.
 }
