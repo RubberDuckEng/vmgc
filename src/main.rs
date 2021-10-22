@@ -33,20 +33,17 @@ struct Space {
 
 impl Space {
     fn new(size: usize) -> Result<Space, GCError> {
-        unsafe {
-            // TODO: Should we allocte on a 4k boundary? Might have implications
-            // for returning memory to the system.
-            let layout = Layout::from_size_align_unchecked(size, 0x1000);
-            let ptr = alloc(layout);
-            if ptr.is_null() {
-                return Err(GCError::OSOutOfMemory);
-            }
-            Ok(Space {
-                base: ptr,
-                size,
-                next: ptr,
-            })
+        // TODO: Should we allocte on a 4k boundary? Might have implications
+        // for returning memory to the system.
+        let ptr = unsafe { alloc(Layout::from_size_align_unchecked(size, 0x1000)) };
+        if ptr.is_null() {
+            return Err(GCError::OSOutOfMemory);
         }
+        Ok(Space {
+            base: ptr,
+            size,
+            next: ptr,
+        })
     }
 
     fn clear(&mut self) {
@@ -57,16 +54,16 @@ impl Space {
 
     // TODO: The client should be able to specify the alignment.
     fn alloc(&mut self, size: usize) -> Result<*mut u8, GCError> {
+        let allocated = self.used();
+        if allocated.checked_add(size).ok_or(GCError::NoSpace)? > self.size {
+            return Err(GCError::NoSpace);
+        }
+        let result = self.next;
         unsafe {
-            let allocated = self.used();
-            if allocated.checked_add(size).ok_or(GCError::NoSpace)? > self.size {
-                return Err(GCError::NoSpace);
-            }
-            let result = self.next;
             self.next = result.add(size);
             result.write_bytes(0, size);
-            Ok(result)
         }
+        Ok(result)
     }
 
     fn used(&self) -> usize {
