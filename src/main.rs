@@ -51,6 +51,7 @@ impl Space {
 
     fn clear(&mut self) {
         // TODO: Return memory to the system.
+        unsafe { self.base.write_bytes(0, self.used()) };
         self.next = self.base;
     }
 
@@ -332,5 +333,17 @@ mod tests {
         assert_eq!(1u32, counter.get());
     }
 
-    // TODO: Write a test that adds two numbers.
+    #[test]
+    fn number_value_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        let mut one = heap.allocate::<Number>().unwrap();
+        let mut two = heap.allocate::<Number>().unwrap();
+        one.get_mut().value = 1;
+        two.get_mut().value = 2;
+        assert_eq!(1, one.get().value);
+        assert_eq!(2, two.get().value);
+        heap.collect();
+        assert_eq!(1, one.get().value);
+        assert_eq!(2, two.get().value);
+    }
 }
