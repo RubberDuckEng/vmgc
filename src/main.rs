@@ -86,7 +86,7 @@ impl ObjectPtr {
         self.0
     }
 
-    fn to_header(&self) -> HeaderPtr {
+    fn to_header_ptr(&self) -> HeaderPtr {
         HeaderPtr::new(unsafe { self.addr().sub(HEADER_SIZE) })
     }
 }
@@ -103,7 +103,7 @@ impl HeaderPtr {
         self.0
     }
 
-    fn to_object(&self) -> ObjectPtr {
+    fn to_object_ptr(&self) -> ObjectPtr {
         ObjectPtr::new(unsafe { self.addr().add(HEADER_SIZE) })
     }
 }
@@ -162,7 +162,7 @@ impl Heap {
                         alloc_size,
                     );
                 }
-                cell.ptr = new_ptr.to_object();
+                cell.ptr = new_ptr.to_object_ptr();
             }
         }
         // TODO: Scan the Vec of weak pointers to see if any are pointing into
@@ -172,8 +172,9 @@ impl Heap {
     }
 
     pub fn allocate<T>(&mut self) -> Result<GlobalHandle<T>, GCError> {
-        let header = ObjectHeader::new::<T>(&mut self.from_space)?;
-        Ok(self.alloc_handle::<T>(header.as_ptr().to_object()))
+        let object_size = std::mem::size_of::<T>();
+        let header = ObjectHeader::new(&mut self.from_space, object_size)?;
+        Ok(self.alloc_handle::<T>(header.as_ptr().to_object_ptr()))
     }
 
     fn alloc_handle<T>(&self, ptr: ObjectPtr) -> GlobalHandle<T> {
@@ -242,8 +243,7 @@ struct ObjectHeader {
 const HEADER_SIZE: usize = std::mem::size_of::<ObjectHeader>();
 
 impl ObjectHeader {
-    fn new<'a, T>(space: &mut Space) -> Result<&'a mut ObjectHeader, GCError> {
-        let object_size = std::mem::size_of::<T>();
+    fn new<'a>(space: &mut Space, object_size: usize) -> Result<&'a mut ObjectHeader, GCError> {
         let header_ptr = HeaderPtr::new(space.alloc(HEADER_SIZE + object_size)?);
         let header = ObjectHeader::from_header_ptr(header_ptr);
         header.object_size = object_size;
@@ -255,7 +255,7 @@ impl ObjectHeader {
     }
 
     fn from_object_ptr<'a>(object_ptr: ObjectPtr) -> &'a mut ObjectHeader {
-        Self::from_header_ptr(object_ptr.to_header())
+        Self::from_header_ptr(object_ptr.to_header_ptr())
     }
 
     fn alloc_size(&self) -> usize {
