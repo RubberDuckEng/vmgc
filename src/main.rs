@@ -352,8 +352,9 @@ impl<T> HostObjectFinalizer<T> {
 
 impl<T> Finalizable for HostObjectFinalizer<T> {
     fn finalize(&self, ptr: ObjectPtr) {
-        let ptr = ptr.addr() as *mut T;
-        std::mem::drop(unsafe { Box::<T>::from_raw(ptr) });
+        let ptr = ptr.addr() as *mut HostObject<T>;
+        let value_ptr = unsafe { (*ptr).value_ptr };
+        std::mem::drop(unsafe { Box::<T>::from_raw(value_ptr) });
     }
 }
 
