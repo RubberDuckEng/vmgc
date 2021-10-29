@@ -6,8 +6,6 @@ use std::marker::PhantomData;
 use std::sync::Arc;
 
 // Things to do
-// 1. Make it possible to have different sized objects. (Object header)
-// 2. Make a second object type (not number, maybe string?)
 // 3. Make a host object with finalizer (start with weak pointer?)
 // 4. Make it possible to trace objects.
 
@@ -116,10 +114,32 @@ impl HeapCell {
     }
 }
 
-#[derive(Debug, Default)]
+trait Finalizable {
+    fn finalize(&self, ptr: ObjectPtr);
+}
+
+struct WeakCell {
+    finalizer: Box<dyn Finalizable>,
+    ptr: ObjectPtr,
+}
+
+impl WeakCell {
+    fn finalize(&self) {
+        self.finalizer.finalize(self.ptr);
+    }
+}
+
+#[derive(Default)]
 struct HeapInner {
-    cells: Vec<Option<HeapCell>>,
+    globals: Vec<Option<HeapCell>>,
+    objects_with_finalizers: Vec<WeakCell>,
     // TODO: Add Vec of weak pointers.
+}
+
+impl std::fmt::Debug for HeapInner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("HeapInner").finish()
+    }
 }
 
 #[derive(Debug)]
@@ -146,20 +166,33 @@ impl Heap {
 
     pub fn collect(&mut self) {
         let mut inner = self.inner.borrow_mut();
-        for maybe_cell in inner.cells.iter_mut() {
+        for maybe_cell in inner.globals.iter_mut() {
             if let Some(cell) = maybe_cell {
-                let header = cell.header();
-                let alloc_size = header.alloc_size();
+                let old_header = cell.header();
+                let alloc_size = old_header.alloc_size();
                 // TODO: Trace the object graph.
-                let new_ptr = HeaderPtr::new(self.to_space.alloc(alloc_size).unwrap());
+                let new_header_ptr = HeaderPtr::new(self.to_space.alloc(alloc_size).unwrap());
                 unsafe {
                     std::ptr::copy_nonoverlapping(
-                        header.as_ptr().addr(),
-                        new_ptr.addr(),
+                        old_header.as_ptr().addr(),
+                        new_header_ptr.addr(),
                         alloc_size,
                     );
                 }
-                cell.ptr = new_ptr.to_object_ptr();
+                old_header.new_header_ptr = Some(new_header_ptr);
+                cell.ptr = new_header_ptr.to_object_ptr();
+            }
+        }
+        let mut new_objects_with_finalizers = vec![];
+        for cell in &mut inner.objects_with_finalizers {
+            let old_header = ObjectHeader::from_object_ptr(cell.ptr);
+            if let Some(new_header_ptr) = old_header.new_header_ptr {
+                cell.ptr = new_header_ptr.to_object_ptr();
+                new_objects_with_finalizers.push(cell);
+            } else {
+                // TODO: Consider defering to a finalization queue so that we're
+                // in a less vulnerable state.
+                cell.finalize();
             }
         }
         // TODO: Scan the Vec of weak pointers to see if any are pointing into
@@ -168,18 +201,23 @@ impl Heap {
         self.to_space.clear();
     }
 
-    pub fn allocate<T>(&mut self) -> Result<GlobalHandle<T>, GCError> {
+    fn allocate_object<T>(&mut self) -> Result<ObjectPtr, GCError> {
         let object_size = std::mem::size_of::<T>();
         let header = ObjectHeader::new(&mut self.from_space, object_size)?;
-        Ok(self.alloc_handle::<T>(header.as_ptr().to_object_ptr()))
+        Ok(header.as_ptr().to_object_ptr())
+    }
+
+    pub fn allocate<T>(&mut self) -> Result<GlobalHandle<T>, GCError> {
+        let object_ptr = self.allocate_object::<T>()?;
+        Ok(self.alloc_handle::<T>(object_ptr))
     }
 
     fn alloc_handle<T>(&self, ptr: ObjectPtr) -> GlobalHandle<T> {
         let index = {
             // TODO: Scan for available cells.
             let mut inner = self.inner.borrow_mut();
-            let index = inner.cells.len();
-            inner.cells.push(Some(HeapCell { ptr }));
+            let index = inner.globals.len();
+            inner.globals.push(Some(HeapCell { ptr }));
             index
         };
         GlobalHandle {
@@ -189,8 +227,21 @@ impl Heap {
         }
     }
 
-    fn take_object<T>(&mut self, value: Box<T>) -> Result<GlobalHandle<HostObject<T>>, GCError> {
-        let mut handle = self.allocate::<HostObject<T>>()?;
+    pub fn alloc_host_object<T: 'static>(
+        &mut self,
+        value: Box<T>,
+    ) -> Result<GlobalHandle<HostObject<T>>, GCError> {
+        let object_ptr = self.allocate_object::<HostObject<T>>()?;
+        // TODO: This work should probably be done inside allocate where we have
+        // access to the ObjectPtr.
+        self.inner
+            .borrow_mut()
+            .objects_with_finalizers
+            .push(WeakCell {
+                finalizer: Box::new(HostObjectFinalizer::<T>::new()),
+                ptr: object_ptr,
+            });
+        let mut handle = self.alloc_handle::<HostObject<T>>(object_ptr);
         handle.get_mut().value_ptr = Box::into_raw(value);
         // TODO: Register weak pointer for this host object whose callback uses
         // Box::from_raw to tell Rust to take ownership of the memory again.
@@ -206,11 +257,18 @@ struct GlobalHandle<T> {
 }
 
 impl<T> GlobalHandle<T> {
+    // TODO: We should remove this function. It's unsafe for clients to grab the
+    // object pointer without an associated object.
+    fn get_object_ptr(&self) -> ObjectPtr {
+        let inner = self.inner.borrow();
+        inner.globals[self.index].as_ref().unwrap().ptr
+    }
+
     // TODO: These should actually return a HeapRef<T> that prevents GC while
     // the reference is alive.
     fn get(&self) -> &T {
         let inner = self.inner.borrow();
-        let cell = inner.cells[self.index].as_ref().unwrap();
+        let cell = inner.globals[self.index].as_ref().unwrap();
         unsafe { &*(cell.ptr.addr() as *const T) }
     }
 
@@ -218,14 +276,14 @@ impl<T> GlobalHandle<T> {
     // the reference is alive.
     fn get_mut(&mut self) -> &mut T {
         let inner = self.inner.borrow();
-        let cell = inner.cells[self.index].as_ref().unwrap();
+        let cell = inner.globals[self.index].as_ref().unwrap();
         unsafe { &mut *(cell.ptr.addr() as *mut T) }
     }
 }
 
 impl<T> Drop for GlobalHandle<T> {
     fn drop(&mut self) {
-        self.inner.borrow_mut().cells[self.index] = None;
+        self.inner.borrow_mut().globals[self.index] = None;
     }
 }
 
@@ -235,6 +293,10 @@ impl<T> Drop for GlobalHandle<T> {
 #[repr(C)]
 struct ObjectHeader {
     object_size: usize,
+
+    // When we move the object to the new space, we'll record in this field
+    // where we moved it to.
+    new_header_ptr: Option<HeaderPtr>,
 }
 
 const HEADER_SIZE: usize = std::mem::size_of::<ObjectHeader>();
@@ -274,6 +336,25 @@ struct Number {
 #[repr(C)]
 struct HostObject<T> {
     value_ptr: *mut T,
+}
+
+struct HostObjectFinalizer<T> {
+    phantom: PhantomData<T>,
+}
+
+impl<T> HostObjectFinalizer<T> {
+    fn new() -> Self {
+        Self {
+            phantom: PhantomData::<T>::default(),
+        }
+    }
+}
+
+impl<T> Finalizable for HostObjectFinalizer<T> {
+    fn finalize(&self, ptr: ObjectPtr) {
+        let ptr = ptr.addr() as *mut T;
+        std::mem::drop(unsafe { Box::<T>::from_raw(ptr) });
+    }
 }
 
 fn main() {
@@ -325,7 +406,7 @@ mod tests {
             counter: Rc::clone(&counter),
         });
 
-        let handle = heap.take_object(host);
+        let handle = heap.alloc_host_object(host);
         std::mem::drop(handle);
         assert_eq!(0u32, counter.get());
         heap.collect();
