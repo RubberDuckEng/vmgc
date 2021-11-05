@@ -1,4 +1,4 @@
-#![allow(dead_code)]
+// #![allow(dead_code)]
 
 use std::alloc::{alloc, Layout};
 use std::cell::RefCell;
@@ -10,16 +10,15 @@ use std::sync::Arc;
 // 4. Make it possible to trace objects.
 
 #[derive(Debug)]
-enum GCError {
+pub enum GCError {
     // The operating system did not provide use with memory.
     OSOutOfMemory,
 
     // There is no memory left in this space.
     NoSpace,
-
     // There is no space left in the heap to allocate this object, even after
     // collecting dead objects.
-    HeapFull,
+    // HeapFull,
 }
 
 #[derive(Debug)]
@@ -69,6 +68,8 @@ impl Space {
     }
 }
 
+// ObjectPtr could have a generation number, and thus we could know
+// if we ever forgot one between generations (and thus was invalid).
 #[derive(Copy, Clone, Debug)]
 struct ObjectPtr(*mut u8);
 
@@ -114,25 +115,15 @@ impl HeapCell {
     }
 }
 
-trait Finalizable {
-    fn finalize(&self, ptr: ObjectPtr);
-}
-
 struct WeakCell {
-    finalizer: Box<dyn Finalizable>,
+    value: Box<dyn std::any::Any>,
     ptr: ObjectPtr,
-}
-
-impl WeakCell {
-    fn finalize(&self) {
-        self.finalizer.finalize(self.ptr);
-    }
 }
 
 #[derive(Default)]
 struct HeapInner {
     globals: Vec<Option<HeapCell>>,
-    objects_with_finalizers: Vec<WeakCell>,
+    object_cells: Vec<Option<WeakCell>>,
     // TODO: Add Vec of weak pointers.
 }
 
@@ -143,7 +134,7 @@ impl std::fmt::Debug for HeapInner {
 }
 
 #[derive(Debug)]
-struct Heap {
+pub struct Heap {
     // TODO: Add more generations.
     from_space: Space,
     to_space: Space,
@@ -183,18 +174,25 @@ impl Heap {
                 cell.ptr = new_header_ptr.to_object_ptr();
             }
         }
-        let mut new_objects_with_finalizers = vec![];
-        for cell in &mut inner.objects_with_finalizers {
-            let old_header = ObjectHeader::from_object_ptr(cell.ptr);
-            if let Some(new_header_ptr) = old_header.new_header_ptr {
-                cell.ptr = new_header_ptr.to_object_ptr();
-                new_objects_with_finalizers.push(cell);
-            } else {
-                // TODO: Consider defering to a finalization queue so that we're
-                // in a less vulnerable state.
-                cell.finalize();
+        let mut indicies_to_finalize = vec![];
+
+        for (i, maybe_cell) in inner.object_cells.iter_mut().enumerate() {
+            if let Some(cell) = maybe_cell {
+                let old_header = ObjectHeader::from_object_ptr(cell.ptr);
+                if let Some(new_header_ptr) = old_header.new_header_ptr {
+                    cell.ptr = new_header_ptr.to_object_ptr();
+                } else {
+                    // Finalize later in a less vulnerable place.
+                    indicies_to_finalize.push(i);
+                }
             }
         }
+        // FIXME: Move finalization somewhere less vulnerable to avoid dropping
+        // host objects calling back into GC code while we're collecting.
+        for i in indicies_to_finalize {
+            inner.object_cells[i] = None;
+        }
+
         // TODO: Scan the Vec of weak pointers to see if any are pointing into
         // the from_space. If so, call their callbacks.
         std::mem::swap(&mut self.from_space, &mut self.to_space);
@@ -207,11 +205,14 @@ impl Heap {
         Ok(header.as_ptr().to_object_ptr())
     }
 
+    // This allocates a space of size_of(T), but does not take a T, so T
+    // must be a heap-only type as it will never be finalized.
     pub fn allocate<T>(&mut self) -> Result<GlobalHandle<T>, GCError> {
         let object_ptr = self.allocate_object::<T>()?;
         Ok(self.alloc_handle::<T>(object_ptr))
     }
 
+    // Wraps a given ObjectPtr in a handle.
     fn alloc_handle<T>(&self, ptr: ObjectPtr) -> GlobalHandle<T> {
         let index = {
             // TODO: Scan for available cells.
@@ -227,6 +228,8 @@ impl Heap {
         }
     }
 
+    // Maybe this is "wrap_object"?  It takes ownership of a Box<T> and
+    // returns a Handle to the newly allocated Object in the VM's heap.
     pub fn alloc_host_object<T: 'static>(
         &mut self,
         value: Box<T>,
@@ -234,15 +237,13 @@ impl Heap {
         let object_ptr = self.allocate_object::<HostObject<T>>()?;
         // TODO: This work should probably be done inside allocate where we have
         // access to the ObjectPtr.
-        self.inner
-            .borrow_mut()
-            .objects_with_finalizers
-            .push(WeakCell {
-                finalizer: Box::new(HostObjectFinalizer::<T>::new()),
-                ptr: object_ptr,
-            });
+        self.inner.borrow_mut().object_cells.push(Some(WeakCell {
+            value,
+            ptr: object_ptr,
+        }));
+        let index = self.inner.borrow_mut().object_cells.len();
         let mut handle = self.alloc_handle::<HostObject<T>>(object_ptr);
-        handle.get_mut().value_ptr = Box::into_raw(value);
+        handle.get_mut().value_index = index;
         // TODO: Register weak pointer for this host object whose callback uses
         // Box::from_raw to tell Rust to take ownership of the memory again.
         Ok(handle)
@@ -250,23 +251,16 @@ impl Heap {
 }
 
 #[derive(Debug)]
-struct GlobalHandle<T> {
+pub struct GlobalHandle<T> {
     inner: Arc<RefCell<HeapInner>>,
     index: usize,
     phantom: PhantomData<T>,
 }
 
 impl<T> GlobalHandle<T> {
-    // TODO: We should remove this function. It's unsafe for clients to grab the
-    // object pointer without an associated object.
-    fn get_object_ptr(&self) -> ObjectPtr {
-        let inner = self.inner.borrow();
-        inner.globals[self.index].as_ref().unwrap().ptr
-    }
-
     // TODO: These should actually return a HeapRef<T> that prevents GC while
     // the reference is alive.
-    fn get(&self) -> &T {
+    pub fn get(&self) -> &T {
         let inner = self.inner.borrow();
         let cell = inner.globals[self.index].as_ref().unwrap();
         unsafe { &*(cell.ptr.addr() as *const T) }
@@ -274,7 +268,7 @@ impl<T> GlobalHandle<T> {
 
     // TODO: These should actually return a HeapRef<T> that prevents GC while
     // the reference is alive.
-    fn get_mut(&mut self) -> &mut T {
+    pub fn get_mut(&mut self) -> &mut T {
         let inner = self.inner.borrow();
         let cell = inner.globals[self.index].as_ref().unwrap();
         unsafe { &mut *(cell.ptr.addr() as *mut T) }
@@ -299,7 +293,7 @@ struct ObjectHeader {
     new_header_ptr: Option<HeaderPtr>,
 }
 
-const HEADER_SIZE: usize = std::mem::size_of::<ObjectHeader>();
+pub const HEADER_SIZE: usize = std::mem::size_of::<ObjectHeader>();
 
 impl ObjectHeader {
     fn new<'a>(space: &mut Space, object_size: usize) -> Result<&'a mut ObjectHeader, GCError> {
@@ -326,43 +320,22 @@ impl ObjectHeader {
     }
 }
 
+// FIXME: Number does not belong heap.rs.
 #[derive(Debug)]
 #[repr(C)]
-struct Number {
-    value: u64,
+pub struct Number {
+    pub value: u64,
 }
 
 #[derive(Debug)]
 #[repr(C)]
-struct HostObject<T> {
-    value_ptr: *mut T,
-}
-
-struct HostObjectFinalizer<T> {
+pub struct HostObject<T> {
     phantom: PhantomData<T>,
+    value_index: usize,
 }
 
-impl<T> HostObjectFinalizer<T> {
-    fn new() -> Self {
-        Self {
-            phantom: PhantomData::<T>::default(),
-        }
-    }
-}
-
-impl<T> Finalizable for HostObjectFinalizer<T> {
-    fn finalize(&self, ptr: ObjectPtr) {
-        let ptr = ptr.addr() as *mut HostObject<T>;
-        let value_ptr = unsafe { (*ptr).value_ptr };
-        std::mem::drop(unsafe { Box::<T>::from_raw(value_ptr) });
-    }
-}
-
-fn main() {
-    // Allocate 2 objects
-    // Hold a poitner to 1 of them.
-    // Run GC see it's alive.
-    // Verify one is gone.
+impl HostObject<T> {
+    fn borrow<T>() -> &T {}
 }
 
 #[cfg(test)]
@@ -370,7 +343,7 @@ mod tests {
     use std::cell::Cell;
     use std::rc::Rc;
 
-    use super::*;
+    use crate::heap::*;
 
     struct DropObject {
         counter: Rc<Cell<u32>>,
@@ -384,7 +357,7 @@ mod tests {
     }
 
     #[test]
-    fn smoke_test() {
+    pub fn smoke_test() {
         let mut heap = Heap::new(1000).unwrap();
         assert_eq!(heap.used(), 0);
         let one = heap.allocate::<Number>().unwrap();
@@ -426,5 +399,15 @@ mod tests {
         heap.collect();
         assert_eq!(1, one.get().value);
         assert_eq!(2, two.get().value);
+    }
+
+    #[test]
+    fn number_as_host_object_test() {
+        let mut heap = Heap::new(1000).unwrap();
+
+        let number = Box::new(Number { value: 1 });
+        let handle = heap.alloc_host_object(number).unwrap();
+        assert_eq!(1, handle.get().value);
+        std::mem::drop(handle);
     }
 }
