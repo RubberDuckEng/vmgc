@@ -116,6 +116,7 @@ impl HeapCell {
 }
 
 struct WeakCell {
+    #[allow(dead_code)]
     value: Box<dyn std::any::Any>,
     ptr: ObjectPtr,
 }
@@ -241,7 +242,7 @@ impl Heap {
             value,
             ptr: object_ptr,
         }));
-        let index = self.inner.borrow_mut().object_cells.len();
+        let index = self.inner.borrow_mut().object_cells.len() - 1;
         let mut handle = self.alloc_handle::<HostObject<T>>(object_ptr);
         handle.get_mut().value_index = index;
         // TODO: Register weak pointer for this host object whose callback uses
@@ -278,6 +279,16 @@ impl<T> GlobalHandle<T> {
 impl<T> Drop for GlobalHandle<T> {
     fn drop(&mut self) {
         self.inner.borrow_mut().globals[self.index] = None;
+    }
+}
+
+impl<T: 'static> GlobalHandle<HostObject<T>> {
+    pub fn get_object(&self) -> &T {
+        let value_index = self.get().value_index;
+        let inner = self.inner.borrow();
+        let cell = inner.object_cells[value_index].as_ref().unwrap();
+        let ptr = cell.value.downcast_ref::<T>().unwrap() as *const T;
+        unsafe { &*ptr }
     }
 }
 
@@ -332,10 +343,6 @@ pub struct Number {
 pub struct HostObject<T> {
     phantom: PhantomData<T>,
     value_index: usize,
-}
-
-impl HostObject<T> {
-    fn borrow<T>() -> &T {}
 }
 
 #[cfg(test)]
@@ -407,7 +414,7 @@ mod tests {
 
         let number = Box::new(Number { value: 1 });
         let handle = heap.alloc_host_object(number).unwrap();
-        assert_eq!(1, handle.get().value);
+        assert_eq!(1, handle.get_object().value);
         std::mem::drop(handle);
     }
 }
