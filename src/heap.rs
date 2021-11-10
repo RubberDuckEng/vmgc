@@ -1,12 +1,13 @@
 // #![allow(dead_code)]
 
-use std::alloc::{alloc, Layout};
+use std::alloc::{alloc, dealloc, Layout};
+use std::any::Any;
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::marker::PhantomData;
 use std::sync::Arc;
 
 // Things to do
-// 3. Make a host object with finalizer (start with weak pointer?)
 // 4. Make it possible to trace objects.
 
 #[derive(Debug)]
@@ -23,6 +24,7 @@ pub enum GCError {
 
 #[derive(Debug)]
 struct Space {
+    layout: Layout,
     base: *mut u8,
     size: usize,
     next: *mut u8,
@@ -32,21 +34,17 @@ impl Space {
     fn new(size: usize) -> Result<Space, GCError> {
         // TODO: Should we allocte on a 4k boundary? Might have implications
         // for returning memory to the system.
-        let ptr = unsafe { alloc(Layout::from_size_align_unchecked(size, 0x1000)) };
+        let layout = Layout::from_size_align(size, 0x1000).map_err(|_| GCError::NoSpace)?;
+        let ptr = unsafe { alloc(layout) };
         if ptr.is_null() {
             return Err(GCError::OSOutOfMemory);
         }
         Ok(Space {
+            layout,
             base: ptr,
             size,
             next: ptr,
         })
-    }
-
-    fn clear(&mut self) {
-        // TODO: Return memory to the system.
-        unsafe { self.base.write_bytes(0, self.used()) };
-        self.next = self.base;
     }
 
     // TODO: The client should be able to specify the alignment.
@@ -68,6 +66,15 @@ impl Space {
     }
 }
 
+impl Drop for Space {
+    fn drop(&mut self) {
+        unsafe {
+            self.base.write_bytes(0, self.used());
+            dealloc(self.base, self.layout);
+        }
+    }
+}
+
 // ObjectPtr could have a generation number, and thus we could know
 // if we ever forgot one between generations (and thus was invalid).
 #[derive(Copy, Clone, Debug)]
@@ -84,6 +91,10 @@ impl ObjectPtr {
 
     fn to_header_ptr(&self) -> HeaderPtr {
         HeaderPtr::new(unsafe { self.addr().sub(HEADER_SIZE) })
+    }
+
+    fn header(&self) -> &mut ObjectHeader {
+        ObjectHeader::from_object_ptr(*self)
     }
 }
 
@@ -117,7 +128,7 @@ impl HeapCell {
 
 struct WeakCell {
     #[allow(dead_code)]
-    value: Box<dyn std::any::Any>,
+    value: Box<dyn Traceable>,
     ptr: ObjectPtr,
 }
 
@@ -134,11 +145,47 @@ impl std::fmt::Debug for HeapInner {
     }
 }
 
+pub struct ObjectVisitor {
+    space: Space,
+    queue: VecDeque<ObjectPtr>,
+}
+
+impl ObjectVisitor {
+    fn new(to_space: Space) -> ObjectVisitor {
+        ObjectVisitor {
+            space: to_space,
+            queue: VecDeque::default(),
+        }
+    }
+
+    fn visit_header(&mut self, header: &mut ObjectHeader) -> ObjectPtr {
+        if let Some(new_header_ptr) = header.new_header_ptr {
+            return new_header_ptr.to_object_ptr();
+        }
+        let alloc_size = header.alloc_size();
+        let new_header_ptr = HeaderPtr::new(self.space.alloc(alloc_size).unwrap());
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                header.as_ptr().addr(),
+                new_header_ptr.addr(),
+                alloc_size,
+            );
+        }
+        header.new_header_ptr = Some(new_header_ptr);
+        let object_ptr = new_header_ptr.to_object_ptr();
+        self.queue.push_back(object_ptr);
+        object_ptr
+    }
+
+    pub fn visit(&mut self, handle: &mut HeapHandle) {
+        handle.ptr = self.visit_header(handle.ptr.header());
+    }
+}
+
 #[derive(Debug)]
 pub struct Heap {
     // TODO: Add more generations.
-    from_space: Space,
-    to_space: Space,
+    space: Space,
     inner: Arc<RefCell<HeapInner>>,
 }
 
@@ -146,37 +193,41 @@ impl Heap {
     pub fn new(size: usize) -> Result<Heap, GCError> {
         let half_size = size / 2;
         Ok(Heap {
-            from_space: Space::new(half_size)?,
-            to_space: Space::new(half_size)?,
+            space: Space::new(half_size)?,
             inner: Arc::new(RefCell::new(HeapInner::default())),
         })
     }
 
     pub fn used(&self) -> usize {
-        self.from_space.used() + self.to_space.used()
+        self.space.used()
     }
 
-    pub fn collect(&mut self) {
-        let mut inner = self.inner.borrow_mut();
-        for maybe_cell in inner.globals.iter_mut() {
+    pub fn collect(&mut self) -> Result<(), GCError> {
+        let mut visitor = ObjectVisitor::new(Space::new(self.space.size)?);
+        let mut globals = vec![];
+        std::mem::swap(&mut globals, &mut self.inner.borrow_mut().globals);
+        for maybe_cell in globals.iter_mut() {
             if let Some(cell) = maybe_cell {
-                let old_header = cell.header();
-                let alloc_size = old_header.alloc_size();
-                // TODO: Trace the object graph.
-                let new_header_ptr = HeaderPtr::new(self.to_space.alloc(alloc_size).unwrap());
-                unsafe {
-                    std::ptr::copy_nonoverlapping(
-                        old_header.as_ptr().addr(),
-                        new_header_ptr.addr(),
-                        alloc_size,
-                    );
-                }
-                old_header.new_header_ptr = Some(new_header_ptr);
-                cell.ptr = new_header_ptr.to_object_ptr();
+                cell.ptr = visitor.visit_header(cell.header());
             }
         }
+        std::mem::swap(&mut globals, &mut self.inner.borrow_mut().globals);
+
+        while let Some(object_ptr) = visitor.queue.pop_front() {
+            match object_ptr.header().object_type {
+                ObjectType::Primitive => {}
+                ObjectType::Host => {
+                    let value_index = unsafe { *(object_ptr.addr() as *const usize) };
+                    let mut inner = self.inner.borrow_mut();
+                    let cell = inner.object_cells[value_index].as_mut().unwrap();
+                    cell.value.trace(&mut visitor);
+                }
+            }
+        }
+
         let mut indicies_to_finalize = vec![];
 
+        let mut inner = self.inner.borrow_mut();
         for (i, maybe_cell) in inner.object_cells.iter_mut().enumerate() {
             if let Some(cell) = maybe_cell {
                 let old_header = ObjectHeader::from_object_ptr(cell.ptr);
@@ -196,20 +247,20 @@ impl Heap {
 
         // TODO: Scan the Vec of weak pointers to see if any are pointing into
         // the from_space. If so, call their callbacks.
-        std::mem::swap(&mut self.from_space, &mut self.to_space);
-        self.to_space.clear();
+        std::mem::swap(&mut self.space, &mut visitor.space);
+        Ok(())
     }
 
-    fn allocate_object<T>(&mut self) -> Result<ObjectPtr, GCError> {
+    fn allocate_object<T>(&mut self, object_type: ObjectType) -> Result<ObjectPtr, GCError> {
         let object_size = std::mem::size_of::<T>();
-        let header = ObjectHeader::new(&mut self.from_space, object_size)?;
+        let header = ObjectHeader::new(&mut self.space, object_size, object_type)?;
         Ok(header.as_ptr().to_object_ptr())
     }
 
     // This allocates a space of size_of(T), but does not take a T, so T
     // must be a heap-only type as it will never be finalized.
     pub fn allocate<T>(&mut self) -> Result<GlobalHandle<T>, GCError> {
-        let object_ptr = self.allocate_object::<T>()?;
+        let object_ptr = self.allocate_object::<T>(ObjectType::Primitive)?;
         Ok(self.alloc_handle::<T>(object_ptr))
     }
 
@@ -231,11 +282,11 @@ impl Heap {
 
     // Maybe this is "wrap_object"?  It takes ownership of a Box<T> and
     // returns a Handle to the newly allocated Object in the VM's heap.
-    pub fn alloc_host_object<T: 'static>(
+    pub fn alloc_host_object<T: Traceable>(
         &mut self,
         value: Box<T>,
     ) -> Result<GlobalHandle<HostObject<T>>, GCError> {
-        let object_ptr = self.allocate_object::<HostObject<T>>()?;
+        let object_ptr = self.allocate_object::<HostObject<T>>(ObjectType::Host)?;
         // TODO: This work should probably be done inside allocate where we have
         // access to the ObjectPtr.
         self.inner.borrow_mut().object_cells.push(Some(WeakCell {
@@ -282,12 +333,13 @@ impl<T> Drop for GlobalHandle<T> {
     }
 }
 
-impl<T: 'static> GlobalHandle<HostObject<T>> {
+impl<T: Traceable> GlobalHandle<HostObject<T>> {
     pub fn get_object(&self) -> &T {
         let value_index = self.get().value_index;
         let inner = self.inner.borrow();
         let cell = inner.object_cells[value_index].as_ref().unwrap();
-        let ptr = cell.value.downcast_ref::<T>().unwrap() as *const T;
+        let value = cell.value.as_ref();
+        let ptr = value.as_any().downcast_ref().unwrap() as *const T;
         unsafe { &*ptr }
     }
 }
@@ -296,8 +348,16 @@ impl<T: 'static> GlobalHandle<HostObject<T>> {
 
 #[derive(Debug)]
 #[repr(C)]
+enum ObjectType {
+    Primitive,
+    Host,
+}
+
+#[derive(Debug)]
+#[repr(C)]
 struct ObjectHeader {
     object_size: usize,
+    object_type: ObjectType,
 
     // When we move the object to the new space, we'll record in this field
     // where we moved it to.
@@ -307,10 +367,15 @@ struct ObjectHeader {
 pub const HEADER_SIZE: usize = std::mem::size_of::<ObjectHeader>();
 
 impl ObjectHeader {
-    fn new<'a>(space: &mut Space, object_size: usize) -> Result<&'a mut ObjectHeader, GCError> {
+    fn new<'a>(
+        space: &mut Space,
+        object_size: usize,
+        object_type: ObjectType,
+    ) -> Result<&'a mut ObjectHeader, GCError> {
         let header_ptr = HeaderPtr::new(space.alloc(HEADER_SIZE + object_size)?);
         let header = ObjectHeader::from_header_ptr(header_ptr);
         header.object_size = object_size;
+        header.object_type = object_type;
         Ok(header)
     }
 
@@ -340,9 +405,43 @@ pub struct Number {
 
 #[derive(Debug)]
 #[repr(C)]
-pub struct HostObject<T> {
+pub struct HostObject<T: Traceable> {
     phantom: PhantomData<T>,
     value_index: usize,
+}
+
+pub struct HeapHandle {
+    ptr: ObjectPtr,
+}
+
+pub trait AsAny: Any {
+    fn as_any(&self) -> &dyn Any;
+    fn get_type_name(&self) -> &'static str;
+}
+
+impl<T: Any> AsAny for T {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+
+    fn get_type_name(&self) -> &'static str {
+        std::any::type_name::<T>()
+    }
+}
+pub trait Traceable: AsAny + 'static {
+    fn trace(&mut self, _visitor: &mut ObjectVisitor) {}
+}
+
+pub struct NumberList {
+    values: Vec<HeapHandle>,
+}
+
+impl Traceable for NumberList {
+    fn trace(&mut self, visitor: &mut ObjectVisitor) {
+        for handle in self.values.iter_mut() {
+            visitor.visit(handle);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -356,12 +455,20 @@ mod tests {
         counter: Rc<Cell<u32>>,
     }
 
+    impl Traceable for DropObject {}
+
     impl Drop for DropObject {
         fn drop(&mut self) {
             let counter = self.counter.get();
             self.counter.set(counter + 1);
         }
     }
+
+    struct HostNumber {
+        value: u64,
+    }
+
+    impl Traceable for HostNumber {}
 
     #[test]
     pub fn smoke_test() {
@@ -374,7 +481,7 @@ mod tests {
             heap.used(),
             (HEADER_SIZE + std::mem::size_of::<Number>()) * 2
         );
-        heap.collect();
+        heap.collect().ok();
         assert_eq!(heap.used(), HEADER_SIZE + std::mem::size_of::<Number>());
         std::mem::drop(two);
     }
@@ -390,7 +497,7 @@ mod tests {
         let handle = heap.alloc_host_object(host);
         std::mem::drop(handle);
         assert_eq!(0u32, counter.get());
-        heap.collect();
+        heap.collect().ok();
         assert_eq!(1u32, counter.get());
     }
 
@@ -403,7 +510,7 @@ mod tests {
         two.get_mut().value = 2;
         assert_eq!(1, one.get().value);
         assert_eq!(2, two.get().value);
-        heap.collect();
+        heap.collect().ok();
         assert_eq!(1, one.get().value);
         assert_eq!(2, two.get().value);
     }
@@ -412,7 +519,8 @@ mod tests {
     fn number_as_host_object_test() {
         let mut heap = Heap::new(1000).unwrap();
 
-        let number = Box::new(Number { value: 1 });
+        let num = HostNumber { value: 1 };
+        let number = Box::new(num);
         let handle = heap.alloc_host_object(number).unwrap();
         assert_eq!(1, handle.get_object().value);
         std::mem::drop(handle);

@@ -9,6 +9,6 @@ fn main() {
     assert_eq!(0, one.get().value);
     let two = heap.allocate::<Number>().unwrap();
     std::mem::drop(one);
-    heap.collect();
+    heap.collect().ok();
     std::mem::drop(two);
 }
