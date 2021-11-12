@@ -4,11 +4,10 @@ use std::alloc::{alloc, dealloc, Layout};
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::convert::{From, TryInto};
 use std::marker::PhantomData;
+// use std::ptr::NonNull;
 use std::sync::Arc;
-
-// Things to do
-// 4. Make it possible to trace objects.
 
 #[derive(Debug)]
 pub enum GCError {
@@ -20,6 +19,7 @@ pub enum GCError {
     // There is no space left in the heap to allocate this object, even after
     // collecting dead objects.
     // HeapFull,
+    TypeError,
 }
 
 #[derive(Debug)]
@@ -75,6 +75,74 @@ impl Drop for Space {
     }
 }
 
+#[derive(Copy, Clone)]
+pub union TaggedPtr {
+    tag: usize,
+    number: isize,
+    object: usize, // FIXME: Should be NonNull<T>
+}
+
+impl TaggedPtr {
+    fn header(&self) -> Option<&mut ObjectHeader> {
+        (*self).try_into().ok().map(ObjectHeader::from_object_ptr)
+    }
+}
+
+const TAG_MASK: usize = 0x3;
+pub const TAG_NUMBER: usize = 0x0;
+pub const TAG_OBJECT: usize = 0x1;
+const PTR_MASK: usize = !0x3;
+
+impl From<i32> for TaggedPtr {
+    fn from(value: i32) -> TaggedPtr {
+        TaggedPtr {
+            number: (value as isize) << 2,
+        }
+    }
+}
+
+impl TryInto<i32> for TaggedPtr {
+    type Error = GCError;
+    fn try_into(self) -> Result<i32, GCError> {
+        unsafe {
+            match self.tag & TAG_MASK {
+                TAG_NUMBER => Ok((self.number >> 2) as i32),
+                _ => Err(GCError::TypeError),
+            }
+        }
+    }
+}
+
+impl From<ObjectPtr> for TaggedPtr {
+    fn from(ptr: ObjectPtr) -> TaggedPtr {
+        unsafe {
+            TaggedPtr {
+                object: std::mem::transmute::<ObjectPtr, usize>(ptr) | TAG_OBJECT,
+            }
+        }
+    }
+}
+
+impl TryInto<ObjectPtr> for TaggedPtr {
+    type Error = GCError;
+    fn try_into(self) -> Result<ObjectPtr, GCError> {
+        unsafe {
+            match self.tag & TAG_MASK {
+                TAG_OBJECT => Ok(std::mem::transmute::<usize, ObjectPtr>(
+                    self.object & PTR_MASK,
+                )),
+                _ => Err(GCError::TypeError),
+            }
+        }
+    }
+}
+
+impl std::fmt::Debug for TaggedPtr {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TaggedPtr").finish()
+    }
+}
+
 // ObjectPtr could have a generation number, and thus we could know
 // if we ever forgot one between generations (and thus was invalid).
 #[derive(Copy, Clone, Debug)]
@@ -117,19 +185,19 @@ impl HeaderPtr {
 
 #[derive(Debug)]
 struct HeapCell {
-    ptr: ObjectPtr,
+    ptr: TaggedPtr,
 }
 
 impl HeapCell {
-    fn header(&self) -> &mut ObjectHeader {
-        ObjectHeader::from_object_ptr(self.ptr)
+    fn header(&self) -> Option<&mut ObjectHeader> {
+        self.ptr.header()
     }
 }
 
 struct WeakCell {
     #[allow(dead_code)]
     value: Box<dyn Traceable>,
-    ptr: ObjectPtr,
+    ptr: TaggedPtr,
 }
 
 #[derive(Default)]
@@ -178,7 +246,9 @@ impl ObjectVisitor {
     }
 
     pub fn visit(&mut self, handle: &mut HeapHandle) {
-        handle.ptr = self.visit_header(handle.ptr.header());
+        if let Some(header) = handle.ptr.header() {
+            handle.ptr = self.visit_header(header).into();
+        }
     }
 }
 
@@ -208,7 +278,9 @@ impl Heap {
         std::mem::swap(&mut globals, &mut self.inner.borrow_mut().globals);
         for maybe_cell in globals.iter_mut() {
             if let Some(cell) = maybe_cell {
-                cell.ptr = visitor.visit_header(cell.header());
+                if let Some(header) = cell.header() {
+                    cell.ptr = visitor.visit_header(header).into();
+                }
             }
         }
         std::mem::swap(&mut globals, &mut self.inner.borrow_mut().globals);
@@ -230,12 +302,13 @@ impl Heap {
         let mut inner = self.inner.borrow_mut();
         for (i, maybe_cell) in inner.object_cells.iter_mut().enumerate() {
             if let Some(cell) = maybe_cell {
-                let old_header = ObjectHeader::from_object_ptr(cell.ptr);
-                if let Some(new_header_ptr) = old_header.new_header_ptr {
-                    cell.ptr = new_header_ptr.to_object_ptr();
-                } else {
-                    // Finalize later in a less vulnerable place.
-                    indicies_to_finalize.push(i);
+                if let Some(old_header) = cell.ptr.header() {
+                    if let Some(new_header_ptr) = old_header.new_header_ptr {
+                        cell.ptr = new_header_ptr.to_object_ptr().into();
+                    } else {
+                        // Finalize later in a less vulnerable place.
+                        indicies_to_finalize.push(i);
+                    }
                 }
             }
         }
@@ -261,17 +334,21 @@ impl Heap {
     // must be a heap-only type as it will never be finalized.
     pub fn allocate_global<T>(&mut self) -> Result<GlobalHandle<T>, GCError> {
         let object_ptr = self.allocate_object::<T>(ObjectType::Primitive)?;
-        Ok(self.alloc_handle::<T>(object_ptr))
+        Ok(self.alloc_handle::<T>(object_ptr.into()))
+    }
+
+    pub fn allocate_integer(&mut self, value: i32) -> GlobalHandle<i32> {
+        self.alloc_handle::<i32>(value.into())
     }
 
     pub fn allocate_heap<T>(&mut self) -> Result<HeapHandle, GCError> {
         Ok(HeapHandle::new(
-            self.allocate_object::<T>(ObjectType::Primitive)?,
+            self.allocate_object::<T>(ObjectType::Primitive)?.into(),
         ))
     }
 
-    // Wraps a given ObjectPtr in a handle.
-    fn alloc_handle<T>(&self, ptr: ObjectPtr) -> GlobalHandle<T> {
+    // Wraps a given TaggedPtr in a handle.
+    fn alloc_handle<T>(&self, ptr: TaggedPtr) -> GlobalHandle<T> {
         let index = {
             // TODO: Scan for available cells.
             let mut inner = self.inner.borrow_mut();
@@ -292,15 +369,17 @@ impl Heap {
         &mut self,
         value: Box<T>,
     ) -> Result<GlobalHandle<HostObject<T>>, GCError> {
-        let object_ptr = self.allocate_object::<HostObject<T>>(ObjectType::Host)?;
+        let ptr = self
+            .allocate_object::<HostObject<T>>(ObjectType::Host)?
+            .into();
         // TODO: This work should probably be done inside allocate where we have
         // access to the ObjectPtr.
-        self.inner.borrow_mut().object_cells.push(Some(WeakCell {
-            value,
-            ptr: object_ptr,
-        }));
+        self.inner
+            .borrow_mut()
+            .object_cells
+            .push(Some(WeakCell { value, ptr }));
         let index = self.inner.borrow_mut().object_cells.len() - 1;
-        let mut handle = self.alloc_handle::<HostObject<T>>(object_ptr);
+        let mut handle = self.alloc_handle::<HostObject<T>>(ptr);
         handle.get_mut().value_index = index;
         // TODO: Register weak pointer for this host object whose callback uses
         // Box::from_raw to tell Rust to take ownership of the memory again.
@@ -315,13 +394,16 @@ pub struct GlobalHandle<T> {
     phantom: PhantomData<T>,
 }
 
+// FIXME: Drop the T, GlobalHandle is always to a Value.
 impl<T> GlobalHandle<T> {
     // TODO: These should actually return a HeapRef<T> that prevents GC while
     // the reference is alive.
     pub fn get(&self) -> &T {
         let inner = self.inner.borrow();
         let cell = inner.globals[self.index].as_ref().unwrap();
-        unsafe { &*(cell.ptr.addr() as *const T) }
+        // If this line panics, it's because the value isn't really an object.
+        let object_ptr: ObjectPtr = cell.ptr.try_into().unwrap();
+        unsafe { &*(object_ptr.addr() as *const T) }
     }
 
     // TODO: These should actually return a HeapRef<T> that prevents GC while
@@ -329,7 +411,17 @@ impl<T> GlobalHandle<T> {
     pub fn get_mut(&mut self) -> &mut T {
         let inner = self.inner.borrow();
         let cell = inner.globals[self.index].as_ref().unwrap();
-        unsafe { &mut *(cell.ptr.addr() as *mut T) }
+        // If this line panics, it's because the value isn't really an object.
+        let object_ptr: ObjectPtr = cell.ptr.try_into().unwrap();
+        unsafe { &mut *(object_ptr.addr() as *mut T) }
+    }
+
+    // TODO: Remove once we have a Value enum.
+    #[cfg(test)]
+    fn get_tagged_ptr(&self) -> TaggedPtr {
+        let inner = self.inner.borrow();
+        let cell = inner.globals[self.index].as_ref().unwrap();
+        cell.ptr
     }
 }
 
@@ -417,11 +509,11 @@ pub struct HostObject<T: Traceable> {
 }
 
 pub struct HeapHandle {
-    ptr: ObjectPtr,
+    ptr: TaggedPtr,
 }
 
 impl HeapHandle {
-    fn new(ptr: ObjectPtr) -> HeapHandle {
+    fn new(ptr: TaggedPtr) -> HeapHandle {
         HeapHandle { ptr }
     }
 }
@@ -554,5 +646,17 @@ mod tests {
         assert_eq!(used, heap.used());
         heap.collect().unwrap();
         assert_eq!(0, heap.used());
+    }
+
+    #[test]
+    fn tagged_num_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        let a = heap.allocate_integer(1);
+        let b = heap.allocate_integer(2);
+        assert_eq!(0, heap.used());
+        let a_value: i32 = a.get_tagged_ptr().try_into().unwrap();
+        assert_eq!(1, a_value);
+        let b_value: i32 = b.get_tagged_ptr().try_into().unwrap();
+        assert_eq!(2, b_value);
     }
 }
