@@ -444,6 +444,7 @@ pub trait Traceable: AsAny + 'static {
     fn trace(&mut self, _visitor: &mut ObjectVisitor) {}
 }
 
+#[derive(Default)]
 pub struct NumberList {
     values: Vec<HeapHandle>,
 }
@@ -541,13 +542,11 @@ mod tests {
     #[test]
     fn tracing_test() {
         let mut heap = Heap::new(1000).unwrap();
-
-        let mut handle = heap.allocate_global::<NumberList>().unwrap();
-        let list = handle.get_mut();
+        let mut list = Box::new(NumberList::default());
         list.values.push(heap.allocate_heap::<Number>().unwrap());
         list.values.push(heap.allocate_heap::<Number>().unwrap());
         list.values.push(heap.allocate_heap::<Number>().unwrap());
-        std::mem::drop(list);
+        let handle = heap.alloc_host_object(list).unwrap();
         let used = heap.used();
         heap.collect().unwrap();
         assert_eq!(used, heap.used());
