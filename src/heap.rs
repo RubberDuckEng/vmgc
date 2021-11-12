@@ -151,9 +151,9 @@ pub struct ObjectVisitor {
 }
 
 impl ObjectVisitor {
-    fn new(to_space: Space) -> ObjectVisitor {
+    fn new(space: Space) -> ObjectVisitor {
         ObjectVisitor {
-            space: to_space,
+            space,
             queue: VecDeque::default(),
         }
     }
