@@ -259,9 +259,15 @@ impl Heap {
 
     // This allocates a space of size_of(T), but does not take a T, so T
     // must be a heap-only type as it will never be finalized.
-    pub fn allocate<T>(&mut self) -> Result<GlobalHandle<T>, GCError> {
+    pub fn allocate_global<T>(&mut self) -> Result<GlobalHandle<T>, GCError> {
         let object_ptr = self.allocate_object::<T>(ObjectType::Primitive)?;
         Ok(self.alloc_handle::<T>(object_ptr))
+    }
+
+    pub fn allocate_heap<T>(&mut self) -> Result<HeapHandle, GCError> {
+        Ok(HeapHandle::new(
+            self.allocate_object::<T>(ObjectType::Primitive)?,
+        ))
     }
 
     // Wraps a given ObjectPtr in a handle.
@@ -414,6 +420,12 @@ pub struct HeapHandle {
     ptr: ObjectPtr,
 }
 
+impl HeapHandle {
+    fn new(ptr: ObjectPtr) -> HeapHandle {
+        HeapHandle { ptr }
+    }
+}
+
 pub trait AsAny: Any {
     fn as_any(&self) -> &dyn Any;
     fn get_type_name(&self) -> &'static str;
@@ -474,8 +486,8 @@ mod tests {
     pub fn smoke_test() {
         let mut heap = Heap::new(1000).unwrap();
         assert_eq!(heap.used(), 0);
-        let one = heap.allocate::<Number>().unwrap();
-        let two = heap.allocate::<Number>().unwrap();
+        let one = heap.allocate_global::<Number>().unwrap();
+        let two = heap.allocate_global::<Number>().unwrap();
         std::mem::drop(one);
         assert_eq!(
             heap.used(),
@@ -504,8 +516,8 @@ mod tests {
     #[test]
     fn number_value_test() {
         let mut heap = Heap::new(1000).unwrap();
-        let mut one = heap.allocate::<Number>().unwrap();
-        let mut two = heap.allocate::<Number>().unwrap();
+        let mut one = heap.allocate_global::<Number>().unwrap();
+        let mut two = heap.allocate_global::<Number>().unwrap();
         one.get_mut().value = 1;
         two.get_mut().value = 2;
         assert_eq!(1, one.get().value);
@@ -524,5 +536,24 @@ mod tests {
         let handle = heap.alloc_host_object(number).unwrap();
         assert_eq!(1, handle.get_object().value);
         std::mem::drop(handle);
+    }
+
+    #[test]
+    fn tracing_test() {
+        let mut heap = Heap::new(1000).unwrap();
+
+        let mut handle = heap.allocate_global::<NumberList>().unwrap();
+        let list = handle.get_mut();
+        list.values.push(heap.allocate_heap::<Number>().unwrap());
+        list.values.push(heap.allocate_heap::<Number>().unwrap());
+        list.values.push(heap.allocate_heap::<Number>().unwrap());
+        std::mem::drop(list);
+        let used = heap.used();
+        heap.collect().unwrap();
+        assert_eq!(used, heap.used());
+        std::mem::drop(handle);
+        assert_eq!(used, heap.used());
+        heap.collect().unwrap();
+        assert_eq!(0, heap.used());
     }
 }
