@@ -3,7 +3,6 @@ use std::any::Any;
 use std::cell::RefCell;
 use std::collections::VecDeque;
 use std::convert::TryInto;
-use std::marker::PhantomData;
 // use std::ptr::NonNull;
 use std::sync::Arc;
 
@@ -76,7 +75,6 @@ impl HeapCell {
 }
 
 struct WeakCell {
-    #[allow(dead_code)]
     value: Box<dyn Traceable>,
     ptr: TaggedPtr,
 }
@@ -168,15 +166,10 @@ impl Heap {
         std::mem::swap(&mut globals, &mut self.inner.borrow_mut().globals);
 
         while let Some(object_ptr) = visitor.queue.pop_front() {
-            match object_ptr.header().object_type {
-                ObjectType::Primitive => {}
-                ObjectType::Host => {
-                    let value_index = unsafe { *(object_ptr.addr() as *const usize) };
-                    let mut inner = self.inner.borrow_mut();
-                    let cell = inner.object_cells[value_index].as_mut().unwrap();
-                    cell.value.trace(&mut visitor);
-                }
-            }
+            let value_index = unsafe { *(object_ptr.addr() as *const usize) };
+            let mut inner = self.inner.borrow_mut();
+            let cell = inner.object_cells[value_index].as_mut().unwrap();
+            cell.value.trace(&mut visitor);
         }
 
         let mut indicies_to_finalize = vec![];
@@ -206,31 +199,48 @@ impl Heap {
         Ok(())
     }
 
-    fn allocate_object<T>(&mut self, object_type: ObjectType) -> Result<ObjectPtr, GCError> {
-        let object_size = std::mem::size_of::<T>();
-        let header = ObjectHeader::new(&mut self.space, object_size, object_type)?;
-        Ok(header.as_ptr().to_object_ptr())
+    fn allocate_object<T: HostObject>(&mut self) -> Result<ObjectPtr, GCError> {
+        let object_size = std::mem::size_of::<usize>();
+        let header = ObjectHeader::new(&mut self.space, object_size, T::TYPE_ID)?;
+        let object_ptr = header.as_ptr().to_object_ptr();
+        let value_index = {
+            let mut inner = self.inner.borrow_mut();
+            let value_index = inner.object_cells.len();
+            inner.object_cells.push(Some(WeakCell {
+                value: Box::new(T::default()),
+                ptr: object_ptr.into(),
+            }));
+            value_index
+        };
+        unsafe {
+            // TODO: Make this more type safe. See similar code in collect().
+            *(object_ptr.addr() as *mut usize) = value_index;
+        }
+        Ok(object_ptr)
     }
 
     // This allocates a space of size_of(T), but does not take a T, so T
     // must be a heap-only type as it will never be finalized.
-    pub fn allocate_global<T>(&mut self) -> Result<GlobalHandle, GCError> {
-        let object_ptr = self.allocate_object::<T>(ObjectType::Primitive)?;
-        Ok(self.alloc_handle::<T>(object_ptr.into()))
+    pub fn allocate<'a, T: HostObject>(
+        &mut self,
+        scope: &'a HandleScope,
+    ) -> Result<LocalHandle<'a>, GCError> {
+        let object_ptr = self.allocate_object::<T>()?;
+        Ok(LocalHandle::new(scope, object_ptr.into()))
     }
 
-    pub fn allocate_integer(&mut self, value: i32) -> GlobalHandle {
-        self.alloc_handle::<i32>(value.into())
+    // FIXME: Move to HandleScope.
+    pub fn allocate_integer<'a>(&mut self, scope: &'a HandleScope, value: i32) -> LocalHandle<'a> {
+        LocalHandle::new(scope, value.into())
     }
 
-    pub fn allocate_heap<T>(&mut self) -> Result<HeapHandle, GCError> {
-        Ok(HeapHandle::new(
-            self.allocate_object::<T>(ObjectType::Primitive)?.into(),
-        ))
+    pub fn allocate_heap<T: HostObject>(&mut self) -> Result<HeapHandle, GCError> {
+        Ok(HeapHandle::new(self.allocate_object::<T>()?.into()))
     }
 
     // Wraps a given TaggedPtr in a handle.
-    fn alloc_handle(&self, ptr: TaggedPtr) -> GlobalHandle {
+    // TODO: Move to LocalHandle.
+    fn alloc_global_handle(&self, ptr: TaggedPtr) -> GlobalHandle {
         let index = {
             // TODO: Scan for available cells.
             let mut inner = self.inner.borrow_mut();
@@ -242,29 +252,6 @@ impl Heap {
             inner: Arc::clone(&self.inner),
             index,
         }
-    }
-
-    // Maybe this is "wrap_object"?  It takes ownership of a Box<T> and
-    // returns a Handle to the newly allocated Object in the VM's heap.
-    pub fn alloc_host_object<T: Traceable>(
-        &mut self,
-        value: Box<T>,
-    ) -> Result<GlobalHandle, GCError> {
-        let ptr = self
-            .allocate_object::<HostObject<T>>(ObjectType::Host)?
-            .into();
-        // TODO: This work should probably be done inside allocate where we have
-        // access to the ObjectPtr.
-        self.inner
-            .borrow_mut()
-            .object_cells
-            .push(Some(WeakCell { value, ptr }));
-        let index = self.inner.borrow_mut().object_cells.len() - 1;
-        let mut handle = self.alloc_handle::<HostObject<T>>(ptr);
-        handle.get_mut().value_index = index;
-        // TODO: Register weak pointer for this host object whose callback uses
-        // Box::from_raw to tell Rust to take ownership of the memory again.
-        Ok(handle)
     }
 }
 
@@ -310,24 +297,14 @@ impl Drop for GlobalHandle {
     }
 }
 
-impl GlobalHandle {
-    // pub fn get_object(&self) -> &T {
-    //     let value_index = self.get().value_index;
-    //     let inner = self.inner.borrow();
-    //     let cell = inner.object_cells[value_index].as_ref().unwrap();
-    //     let value = cell.value.as_ref();
-    //     let ptr = value.as_any().downcast_ref().unwrap() as *const T;
-    //     unsafe { &*ptr }
-    // }
-}
-
-struct HandleScope {
+// FIXME: Hold a ref to the heap.
+pub struct HandleScope {
     inner: Arc<RefCell<HeapInner>>,
     index: usize,
 }
 
 impl HandleScope {
-    fn new(heap: &Heap) -> HandleScope {
+    pub fn new(heap: &Heap) -> HandleScope {
         let mut inner = heap.inner.borrow_mut();
         let index = inner.scopes.len();
         inner.scopes.push(vec![]);
@@ -345,8 +322,13 @@ impl HandleScope {
         index
     }
 
-    fn get(&self, handle: &GlobalHandle) -> LocalHandle {
+    pub fn get(&self, handle: &GlobalHandle) -> LocalHandle {
         LocalHandle::new(self, handle.ptr())
+    }
+
+    fn get_ptr(&self, index: usize) -> TaggedPtr {
+        let inner = self.inner.borrow();
+        inner.scopes[self.index][index].ptr
     }
 }
 
@@ -357,18 +339,8 @@ impl Drop for HandleScope {
     }
 }
 
-// Is this really "ValueRef"?
-enum Value<'a> {
-    Number(i32),
-    List(&'a List),
-}
-
-enum MutValue<'a> {
-    Number(i32),
-    List(&'a mut List),
-}
-
-struct LocalHandle<'a> {
+#[derive(Copy, Clone)]
+pub struct LocalHandle<'a> {
     scope: &'a HandleScope,
     index: usize,
 }
@@ -381,16 +353,42 @@ impl<'a> LocalHandle<'a> {
         }
     }
 
-    fn get(&self) -> Value {}
+    pub fn ptr(&self) -> TaggedPtr {
+        self.scope.get_ptr(self.index)
+    }
 
-    fn get_mut(&self) -> MutValue {}
+    pub fn to_global(&self, heap: &Heap) -> GlobalHandle {
+        heap.alloc_global_handle(self.ptr())
+    }
+
+    pub fn as_ref<T: HostObject>(&self) -> Option<&T> {
+        let maybe_object_ptr: Option<ObjectPtr> = self.ptr().try_into().ok();
+        if let Some(object_ptr) = maybe_object_ptr {
+            let header = object_ptr.header();
+            // TODO: We should use a single TYPE_ID for every HostObject.
+            // We only need specialized type IDs for HeapObjects.
+            if header.object_type != T::TYPE_ID {
+                return None;
+            }
+
+            // TODO: This should be made more type safe. See similar code in collect().
+            let value_index = unsafe { *(object_ptr.addr() as *const usize) };
+            let inner = self.scope.inner.borrow();
+            let cell = inner.object_cells[value_index].as_ref().unwrap();
+            let value = cell.value.as_ref();
+            let ptr = value.as_any().downcast_ref().unwrap() as *const T;
+            Some(unsafe { &*ptr })
+        } else {
+            None
+        }
+    }
 }
 
-#[derive(Debug)]
-#[repr(C)]
-pub struct HostObject<T: Traceable> {
-    phantom: PhantomData<T>,
-    value_index: usize,
+impl<'a> TryInto<i32> for LocalHandle<'a> {
+    type Error = GCError;
+    fn try_into(self) -> Result<i32, GCError> {
+        self.ptr().try_into()
+    }
 }
 
 pub struct HeapHandle {
@@ -403,20 +401,27 @@ impl HeapHandle {
     }
 }
 
+impl<'a> From<LocalHandle<'a>> for HeapHandle {
+    fn from(handle: LocalHandle<'a>) -> Self {
+        HeapHandle { ptr: handle.ptr() }
+    }
+}
+
 pub trait AsAny: Any {
     fn as_any(&self) -> &dyn Any;
-    fn get_type_name(&self) -> &'static str;
 }
 
 impl<T: Any> AsAny for T {
     fn as_any(&self) -> &dyn Any {
         self
     }
-
-    fn get_type_name(&self) -> &'static str {
-        std::any::type_name::<T>()
-    }
 }
-pub trait Traceable: AsAny + 'static {
+pub trait Traceable: AsAny {
     fn trace(&mut self, _visitor: &mut ObjectVisitor) {}
+}
+
+// We will eventually add a HeapObject as an optimization
+// for things which don't hold pointers out to rust objects.
+pub trait HostObject: Traceable + Default {
+    const TYPE_ID: ObjectType;
 }

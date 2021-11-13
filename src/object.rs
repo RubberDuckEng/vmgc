@@ -41,11 +41,11 @@ impl HeaderPtr {
     }
 }
 
-#[derive(Debug)]
-#[repr(C)]
+#[derive(Debug, PartialEq)]
+#[repr(u16)]
 pub enum ObjectType {
-    Primitive,
-    Host,
+    Test,
+    List,
 }
 
 #[derive(Debug)]
