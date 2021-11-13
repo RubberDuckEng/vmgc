@@ -156,17 +156,19 @@ mod tests {
     //     assert_eq!(0, heap.used());
     // }
 
-    // #[test]
-    // fn tagged_num_test() {
-    //     let mut heap = Heap::new(1000).unwrap();
-    //     let a = heap.allocate_integer(1);
-    //     let b = heap.allocate_integer(2);
-    //     assert_eq!(0, heap.used());
-    //     let a_value: i32 = a.ptr().try_into().unwrap();
-    //     assert_eq!(1, a_value);
-    //     let b_value: i32 = b.ptr().try_into().unwrap();
-    //     assert_eq!(2, b_value);
-    // }
+    #[test]
+    fn tagged_num_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        let scope = HandleScope::new(&heap);
+
+        let a = heap.allocate_integer(&scope, 1);
+        let b = heap.allocate_integer(&scope, 2);
+        assert_eq!(0, heap.used());
+        let a_value: i32 = a.ptr().try_into().unwrap();
+        assert_eq!(1, a_value);
+        let b_value: i32 = b.ptr().try_into().unwrap();
+        assert_eq!(2, b_value);
+    }
 
     #[test]
     fn add_i32_test() {
