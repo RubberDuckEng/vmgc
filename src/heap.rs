@@ -4,26 +4,17 @@ use std::alloc::{alloc, dealloc, Layout};
 use std::any::Any;
 use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::convert::{From, TryInto};
+use std::convert::TryInto;
 use std::marker::PhantomData;
 // use std::ptr::NonNull;
 use std::sync::Arc;
 
-#[derive(Debug)]
-pub enum GCError {
-    // The operating system did not provide use with memory.
-    OSOutOfMemory,
-
-    // There is no memory left in this space.
-    NoSpace,
-    // There is no space left in the heap to allocate this object, even after
-    // collecting dead objects.
-    // HeapFull,
-    TypeError,
-}
+use crate::object::*;
+use crate::tagged_ptr::TaggedPtr;
+use crate::types::*;
 
 #[derive(Debug)]
-struct Space {
+pub struct Space {
     layout: Layout,
     base: *mut u8,
     size: usize,
@@ -48,7 +39,7 @@ impl Space {
     }
 
     // TODO: The client should be able to specify the alignment.
-    fn alloc(&mut self, size: usize) -> Result<*mut u8, GCError> {
+    pub fn alloc(&mut self, size: usize) -> Result<*mut u8, GCError> {
         let allocated = self.used();
         if allocated.checked_add(size).ok_or(GCError::NoSpace)? > self.size {
             return Err(GCError::NoSpace);
@@ -72,114 +63,6 @@ impl Drop for Space {
             self.base.write_bytes(0, self.used());
             dealloc(self.base, self.layout);
         }
-    }
-}
-
-#[derive(Copy, Clone)]
-pub union TaggedPtr {
-    tag: usize,
-    number: isize,
-    object: usize, // FIXME: Should be NonNull<T>
-}
-
-impl TaggedPtr {
-    fn header(&self) -> Option<&mut ObjectHeader> {
-        (*self).try_into().ok().map(ObjectHeader::from_object_ptr)
-    }
-}
-
-const TAG_MASK: usize = 0x3;
-pub const TAG_NUMBER: usize = 0x0;
-pub const TAG_OBJECT: usize = 0x1;
-const PTR_MASK: usize = !0x3;
-
-impl From<i32> for TaggedPtr {
-    fn from(value: i32) -> TaggedPtr {
-        TaggedPtr {
-            number: (value as isize) << 2,
-        }
-    }
-}
-
-impl TryInto<i32> for TaggedPtr {
-    type Error = GCError;
-    fn try_into(self) -> Result<i32, GCError> {
-        unsafe {
-            match self.tag & TAG_MASK {
-                TAG_NUMBER => Ok((self.number >> 2) as i32),
-                _ => Err(GCError::TypeError),
-            }
-        }
-    }
-}
-
-impl From<ObjectPtr> for TaggedPtr {
-    fn from(ptr: ObjectPtr) -> TaggedPtr {
-        unsafe {
-            TaggedPtr {
-                object: std::mem::transmute::<ObjectPtr, usize>(ptr) | TAG_OBJECT,
-            }
-        }
-    }
-}
-
-impl TryInto<ObjectPtr> for TaggedPtr {
-    type Error = GCError;
-    fn try_into(self) -> Result<ObjectPtr, GCError> {
-        unsafe {
-            match self.tag & TAG_MASK {
-                TAG_OBJECT => Ok(std::mem::transmute::<usize, ObjectPtr>(
-                    self.object & PTR_MASK,
-                )),
-                _ => Err(GCError::TypeError),
-            }
-        }
-    }
-}
-
-impl std::fmt::Debug for TaggedPtr {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TaggedPtr").finish()
-    }
-}
-
-// ObjectPtr could have a generation number, and thus we could know
-// if we ever forgot one between generations (and thus was invalid).
-#[derive(Copy, Clone, Debug)]
-struct ObjectPtr(*mut u8);
-
-impl ObjectPtr {
-    fn new(addr: *mut u8) -> ObjectPtr {
-        ObjectPtr(addr)
-    }
-
-    fn addr(&self) -> *mut u8 {
-        self.0
-    }
-
-    fn to_header_ptr(&self) -> HeaderPtr {
-        HeaderPtr::new(unsafe { self.addr().sub(HEADER_SIZE) })
-    }
-
-    fn header(&self) -> &mut ObjectHeader {
-        ObjectHeader::from_object_ptr(*self)
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-struct HeaderPtr(*mut u8);
-
-impl HeaderPtr {
-    fn new(addr: *mut u8) -> HeaderPtr {
-        HeaderPtr(addr)
-    }
-
-    fn addr(&self) -> *mut u8 {
-        self.0
-    }
-
-    fn to_object_ptr(&self) -> ObjectPtr {
-        ObjectPtr::new(unsafe { self.addr().add(HEADER_SIZE) })
     }
 }
 
@@ -418,7 +301,7 @@ impl<T> GlobalHandle<T> {
 
     // TODO: Remove once we have a Value enum.
     #[cfg(test)]
-    fn get_tagged_ptr(&self) -> TaggedPtr {
+    pub fn get_tagged_ptr(&self) -> TaggedPtr {
         let inner = self.inner.borrow();
         let cell = inner.globals[self.index].as_ref().unwrap();
         cell.ptr
@@ -443,63 +326,6 @@ impl<T: Traceable> GlobalHandle<HostObject<T>> {
 }
 
 // TODO: Add HandleScope and LocalHandle.
-
-#[derive(Debug)]
-#[repr(C)]
-enum ObjectType {
-    Primitive,
-    Host,
-}
-
-#[derive(Debug)]
-#[repr(C)]
-struct ObjectHeader {
-    object_size: usize,
-    object_type: ObjectType,
-
-    // When we move the object to the new space, we'll record in this field
-    // where we moved it to.
-    new_header_ptr: Option<HeaderPtr>,
-}
-
-pub const HEADER_SIZE: usize = std::mem::size_of::<ObjectHeader>();
-
-impl ObjectHeader {
-    fn new<'a>(
-        space: &mut Space,
-        object_size: usize,
-        object_type: ObjectType,
-    ) -> Result<&'a mut ObjectHeader, GCError> {
-        let header_ptr = HeaderPtr::new(space.alloc(HEADER_SIZE + object_size)?);
-        let header = ObjectHeader::from_header_ptr(header_ptr);
-        header.object_size = object_size;
-        header.object_type = object_type;
-        Ok(header)
-    }
-
-    fn from_header_ptr<'a>(header_ptr: HeaderPtr) -> &'a mut ObjectHeader {
-        unsafe { &mut *(header_ptr.addr() as *mut ObjectHeader) }
-    }
-
-    fn from_object_ptr<'a>(object_ptr: ObjectPtr) -> &'a mut ObjectHeader {
-        Self::from_header_ptr(object_ptr.to_header_ptr())
-    }
-
-    fn alloc_size(&self) -> usize {
-        HEADER_SIZE + self.object_size
-    }
-
-    fn as_ptr(&mut self) -> HeaderPtr {
-        HeaderPtr::new(self as *mut ObjectHeader as *mut u8)
-    }
-}
-
-// FIXME: Number does not belong heap.rs.
-#[derive(Debug)]
-#[repr(C)]
-pub struct Number {
-    pub value: u64,
-}
 
 #[derive(Debug)]
 #[repr(C)]
@@ -534,129 +360,4 @@ impl<T: Any> AsAny for T {
 }
 pub trait Traceable: AsAny + 'static {
     fn trace(&mut self, _visitor: &mut ObjectVisitor) {}
-}
-
-#[derive(Default)]
-pub struct NumberList {
-    values: Vec<HeapHandle>,
-}
-
-impl Traceable for NumberList {
-    fn trace(&mut self, visitor: &mut ObjectVisitor) {
-        for handle in self.values.iter_mut() {
-            visitor.visit(handle);
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use std::cell::Cell;
-    use std::rc::Rc;
-
-    use crate::heap::*;
-
-    struct DropObject {
-        counter: Rc<Cell<u32>>,
-    }
-
-    impl Traceable for DropObject {}
-
-    impl Drop for DropObject {
-        fn drop(&mut self) {
-            let counter = self.counter.get();
-            self.counter.set(counter + 1);
-        }
-    }
-
-    struct HostNumber {
-        value: u64,
-    }
-
-    impl Traceable for HostNumber {}
-
-    #[test]
-    pub fn smoke_test() {
-        let mut heap = Heap::new(1000).unwrap();
-        assert_eq!(heap.used(), 0);
-        let one = heap.allocate_global::<Number>().unwrap();
-        let two = heap.allocate_global::<Number>().unwrap();
-        std::mem::drop(one);
-        assert_eq!(
-            heap.used(),
-            (HEADER_SIZE + std::mem::size_of::<Number>()) * 2
-        );
-        heap.collect().ok();
-        assert_eq!(heap.used(), HEADER_SIZE + std::mem::size_of::<Number>());
-        std::mem::drop(two);
-    }
-
-    #[test]
-    fn finalizer_test() {
-        let mut heap = Heap::new(1000).unwrap();
-        let counter = Rc::new(Cell::new(0));
-        let host = Box::new(DropObject {
-            counter: Rc::clone(&counter),
-        });
-
-        let handle = heap.alloc_host_object(host);
-        std::mem::drop(handle);
-        assert_eq!(0u32, counter.get());
-        heap.collect().ok();
-        assert_eq!(1u32, counter.get());
-    }
-
-    #[test]
-    fn number_value_test() {
-        let mut heap = Heap::new(1000).unwrap();
-        let mut one = heap.allocate_global::<Number>().unwrap();
-        let mut two = heap.allocate_global::<Number>().unwrap();
-        one.get_mut().value = 1;
-        two.get_mut().value = 2;
-        assert_eq!(1, one.get().value);
-        assert_eq!(2, two.get().value);
-        heap.collect().ok();
-        assert_eq!(1, one.get().value);
-        assert_eq!(2, two.get().value);
-    }
-
-    #[test]
-    fn number_as_host_object_test() {
-        let mut heap = Heap::new(1000).unwrap();
-
-        let num = HostNumber { value: 1 };
-        let number = Box::new(num);
-        let handle = heap.alloc_host_object(number).unwrap();
-        assert_eq!(1, handle.get_object().value);
-        std::mem::drop(handle);
-    }
-
-    #[test]
-    fn tracing_test() {
-        let mut heap = Heap::new(1000).unwrap();
-        let mut list = Box::new(NumberList::default());
-        list.values.push(heap.allocate_heap::<Number>().unwrap());
-        list.values.push(heap.allocate_heap::<Number>().unwrap());
-        list.values.push(heap.allocate_heap::<Number>().unwrap());
-        let handle = heap.alloc_host_object(list).unwrap();
-        let used = heap.used();
-        heap.collect().unwrap();
-        assert_eq!(used, heap.used());
-        std::mem::drop(handle);
-        assert_eq!(used, heap.used());
-        heap.collect().unwrap();
-        assert_eq!(0, heap.used());
-    }
-
-    #[test]
-    fn tagged_num_test() {
-        let mut heap = Heap::new(1000).unwrap();
-        let a = heap.allocate_integer(1);
-        let b = heap.allocate_integer(2);
-        assert_eq!(0, heap.used());
-        let a_value: i32 = a.get_tagged_ptr().try_into().unwrap();
-        assert_eq!(1, a_value);
-        let b_value: i32 = b.get_tagged_ptr().try_into().unwrap();
-        assert_eq!(2, b_value);
-    }
 }

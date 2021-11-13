@@ -1,46 +1,18 @@
+use crate::heap::*;
+
 // 1. Create some sort of "Value" type?
 // 2. Create tagged pointer
 // Union
 // Type_id
 //
 
-#[repr(u16)]
-#[derive(Debug, Copy, Clone, PartialEq)]
-pub enum TypeId {
-    Num,
-    String,
-    List,
-}
-
-#[derive(Copy, Clone)]
-pub union TaggedPtr {
-    tag: usize,
-    number: isize,
-    object: NonNull<()>,
-}
-
-const TAG_MASK: usize = 0x3;
-pub const TAG_NUMBER: usize = 0x0;
-pub const TAG_OBJECT: usize = 0x1;
-const PTR_MASK: usize = !0x3;
-
-impl From<i32> for TaggedPtr {
-    fn from(value: i32) -> TaggedPtr {
-        TaggedPtr {
-            number: (value as isize) << 2,
-        }
-    }
-}
-
-impl TryInto<i32> for TaggedPtr {
-    type Error = VMError;
-    fn try_into(ptr: &TaggedPtr) -> Result<i32, Self::Error> {
-        match ptr.tag & TAG_MASK {
-            TAG_NUMBER => Ok(ptr.number >> 2 as i32),
-            _ => Err(VMError::TypeError),
-        }
-    }
-}
+// #[repr(u16)]
+// #[derive(Debug, Copy, Clone, PartialEq)]
+// pub enum TypeId {
+//     Num,
+//     String,
+//     List,
+// }
 
 // Write primitive functions
 // add numbers -> immediate value
@@ -51,3 +23,138 @@ impl TryInto<i32> for TaggedPtr {
 //     let result = a.as_num()? + b.as_num()?;
 //     heap.allocate_local::<Number>(result)
 // }
+
+// FIXME: Number does not belong heap.rs.
+#[derive(Debug)]
+#[repr(C)]
+pub struct Number {
+    pub value: u64,
+}
+
+#[derive(Default)]
+pub struct NumberList {
+    values: Vec<HeapHandle>,
+}
+
+impl Traceable for NumberList {
+    fn trace(&mut self, visitor: &mut ObjectVisitor) {
+        for handle in self.values.iter_mut() {
+            visitor.visit(handle);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use std::cell::Cell;
+    use std::convert::TryInto;
+    use std::rc::Rc;
+
+    use crate::object::HEADER_SIZE;
+
+    struct DropObject {
+        counter: Rc<Cell<u32>>,
+    }
+
+    impl Traceable for DropObject {}
+
+    impl Drop for DropObject {
+        fn drop(&mut self) {
+            let counter = self.counter.get();
+            self.counter.set(counter + 1);
+        }
+    }
+
+    struct HostNumber {
+        value: u64,
+    }
+
+    impl Traceable for HostNumber {}
+
+    #[test]
+    pub fn smoke_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        assert_eq!(heap.used(), 0);
+        let one = heap.allocate_global::<Number>().unwrap();
+        let two = heap.allocate_global::<Number>().unwrap();
+        std::mem::drop(one);
+        assert_eq!(
+            heap.used(),
+            (HEADER_SIZE + std::mem::size_of::<Number>()) * 2
+        );
+        heap.collect().ok();
+        assert_eq!(heap.used(), HEADER_SIZE + std::mem::size_of::<Number>());
+        std::mem::drop(two);
+    }
+
+    #[test]
+    fn finalizer_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        let counter = Rc::new(Cell::new(0));
+        let host = Box::new(DropObject {
+            counter: Rc::clone(&counter),
+        });
+
+        let handle = heap.alloc_host_object(host);
+        std::mem::drop(handle);
+        assert_eq!(0u32, counter.get());
+        heap.collect().ok();
+        assert_eq!(1u32, counter.get());
+    }
+
+    #[test]
+    fn number_value_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        let mut one = heap.allocate_global::<Number>().unwrap();
+        let mut two = heap.allocate_global::<Number>().unwrap();
+        one.get_mut().value = 1;
+        two.get_mut().value = 2;
+        assert_eq!(1, one.get().value);
+        assert_eq!(2, two.get().value);
+        heap.collect().ok();
+        assert_eq!(1, one.get().value);
+        assert_eq!(2, two.get().value);
+    }
+
+    #[test]
+    fn number_as_host_object_test() {
+        let mut heap = Heap::new(1000).unwrap();
+
+        let num = HostNumber { value: 1 };
+        let number = Box::new(num);
+        let handle = heap.alloc_host_object(number).unwrap();
+        assert_eq!(1, handle.get_object().value);
+        std::mem::drop(handle);
+    }
+
+    #[test]
+    fn tracing_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        let mut list = Box::new(NumberList::default());
+        list.values.push(heap.allocate_heap::<Number>().unwrap());
+        list.values.push(heap.allocate_heap::<Number>().unwrap());
+        list.values.push(heap.allocate_heap::<Number>().unwrap());
+        let handle = heap.alloc_host_object(list).unwrap();
+        let used = heap.used();
+        heap.collect().unwrap();
+        assert_eq!(used, heap.used());
+        std::mem::drop(handle);
+        assert_eq!(used, heap.used());
+        heap.collect().unwrap();
+        assert_eq!(0, heap.used());
+    }
+
+    #[test]
+    fn tagged_num_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        let a = heap.allocate_integer(1);
+        let b = heap.allocate_integer(2);
+        assert_eq!(0, heap.used());
+        let a_value: i32 = a.get_tagged_ptr().try_into().unwrap();
+        assert_eq!(1, a_value);
+        let b_value: i32 = b.get_tagged_ptr().try_into().unwrap();
+        assert_eq!(2, b_value);
+    }
+}
