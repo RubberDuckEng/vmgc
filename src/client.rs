@@ -139,22 +139,29 @@ mod tests {
     //     std::mem::drop(handle);
     // }
 
-    // #[test]
-    // fn tracing_test() {
-    //     let mut heap = Heap::new(1000).unwrap();
-    //     let mut list = Box::new(NumberList::default());
-    //     list.values.push(heap.allocate_heap::<Number>().unwrap());
-    //     list.values.push(heap.allocate_heap::<Number>().unwrap());
-    //     list.values.push(heap.allocate_heap::<Number>().unwrap());
-    //     let handle = heap.alloc_host_object(list).unwrap();
-    //     let used = heap.used();
-    //     heap.collect().unwrap();
-    //     assert_eq!(used, heap.used());
-    //     std::mem::drop(handle);
-    //     assert_eq!(used, heap.used());
-    //     heap.collect().unwrap();
-    //     assert_eq!(0, heap.used());
-    // }
+    #[test]
+    fn tracing_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        let scope = HandleScope::new(&heap);
+        let handle = heap.allocate::<List>(&scope).unwrap();
+
+        let list = handle.as_mut::<List>().unwrap();
+        list.values
+            .push(heap.allocate::<DropObject>(&scope).unwrap().into());
+        list.values
+            .push(heap.allocate::<DropObject>(&scope).unwrap().into());
+        list.values
+            .push(heap.allocate::<DropObject>(&scope).unwrap().into());
+        std::mem::drop(list);
+
+        let used = heap.used();
+        heap.collect().ok();
+        assert_eq!(used, heap.used());
+        std::mem::drop(handle);
+        assert_eq!(used, heap.used());
+        heap.collect().ok();
+        assert_eq!(0, heap.used());
+    }
 
     #[test]
     fn tagged_num_test() {
