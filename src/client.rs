@@ -19,7 +19,7 @@ use crate::heap::*;
 // add to a list -> host object with references (traced)
 // add strings -> leaf node host object (no tracing)
 
-// fn num_add(heap: &mut Heap, a: LocalHandle, b: LocalHandle) -> Result<LocalHandle, VMError> {
+// fn num_add(heap: &mut Heap, a: LocalHandle<'_>, b: LocalHandle<'_>) -> Result<LocalHandle, VMError> {
 //     let result = a.as_num()? + b.as_num()?;
 //     heap.allocate_local::<Number>(result)
 // }
@@ -104,30 +104,30 @@ mod tests {
         assert_eq!(1u32, counter.get());
     }
 
-    #[test]
-    fn number_value_test() {
-        let mut heap = Heap::new(1000).unwrap();
-        let mut one = heap.allocate_global::<Number>().unwrap();
-        let mut two = heap.allocate_global::<Number>().unwrap();
-        one.get_mut().value = 1;
-        two.get_mut().value = 2;
-        assert_eq!(1, one.get().value);
-        assert_eq!(2, two.get().value);
-        heap.collect().ok();
-        assert_eq!(1, one.get().value);
-        assert_eq!(2, two.get().value);
-    }
+    // #[test]
+    // fn number_value_test() {
+    //     let mut heap = Heap::new(1000).unwrap();
+    //     let one = heap.allocate_global::<Number>().unwrap();
+    //     let two = heap.allocate_global::<Number>().unwrap();
+    //     one.get_mut().value = 1;
+    //     two.get_mut().value = 2;
+    //     assert_eq!(1, one.get().value);
+    //     assert_eq!(2, two.get().value);
+    //     heap.collect().ok();
+    //     assert_eq!(1, one.get().value);
+    //     assert_eq!(2, two.get().value);
+    // }
 
-    #[test]
-    fn number_as_host_object_test() {
-        let mut heap = Heap::new(1000).unwrap();
+    // #[test]
+    // fn number_as_host_object_test() {
+    //     let mut heap = Heap::new(1000).unwrap();
 
-        let num = HostNumber { value: 1 };
-        let number = Box::new(num);
-        let handle = heap.alloc_host_object(number).unwrap();
-        assert_eq!(1, handle.get_object().value);
-        std::mem::drop(handle);
-    }
+    //     let num = HostNumber { value: 1 };
+    //     let number = Box::new(num);
+    //     let handle = heap.alloc_host_object(number).unwrap();
+    //     assert_eq!(1, handle.get_object().value);
+    //     std::mem::drop(handle);
+    // }
 
     #[test]
     fn tracing_test() {
@@ -152,9 +152,9 @@ mod tests {
         let a = heap.allocate_integer(1);
         let b = heap.allocate_integer(2);
         assert_eq!(0, heap.used());
-        let a_value: i32 = a.get_tagged_ptr().try_into().unwrap();
+        let a_value: i32 = a.ptr().try_into().unwrap();
         assert_eq!(1, a_value);
-        let b_value: i32 = b.get_tagged_ptr().try_into().unwrap();
+        let b_value: i32 = b.ptr().try_into().unwrap();
         assert_eq!(2, b_value);
     }
 }

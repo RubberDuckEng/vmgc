@@ -1,5 +1,3 @@
-// #![allow(dead_code)]
-
 use std::alloc::{alloc, dealloc, Layout};
 use std::any::Any;
 use std::cell::RefCell;
@@ -86,6 +84,7 @@ struct WeakCell {
 #[derive(Default)]
 struct HeapInner {
     globals: Vec<Option<HeapCell>>,
+    scopes: Vec<Vec<HeapCell>>,
     object_cells: Vec<Option<WeakCell>>,
     // TODO: Add Vec of weak pointers.
 }
@@ -215,12 +214,12 @@ impl Heap {
 
     // This allocates a space of size_of(T), but does not take a T, so T
     // must be a heap-only type as it will never be finalized.
-    pub fn allocate_global<T>(&mut self) -> Result<GlobalHandle<T>, GCError> {
+    pub fn allocate_global<T>(&mut self) -> Result<GlobalHandle, GCError> {
         let object_ptr = self.allocate_object::<T>(ObjectType::Primitive)?;
         Ok(self.alloc_handle::<T>(object_ptr.into()))
     }
 
-    pub fn allocate_integer(&mut self, value: i32) -> GlobalHandle<i32> {
+    pub fn allocate_integer(&mut self, value: i32) -> GlobalHandle {
         self.alloc_handle::<i32>(value.into())
     }
 
@@ -231,7 +230,7 @@ impl Heap {
     }
 
     // Wraps a given TaggedPtr in a handle.
-    fn alloc_handle<T>(&self, ptr: TaggedPtr) -> GlobalHandle<T> {
+    fn alloc_handle(&self, ptr: TaggedPtr) -> GlobalHandle {
         let index = {
             // TODO: Scan for available cells.
             let mut inner = self.inner.borrow_mut();
@@ -242,7 +241,6 @@ impl Heap {
         GlobalHandle {
             inner: Arc::clone(&self.inner),
             index,
-            phantom: PhantomData::<T>::default(),
         }
     }
 
@@ -251,7 +249,7 @@ impl Heap {
     pub fn alloc_host_object<T: Traceable>(
         &mut self,
         value: Box<T>,
-    ) -> Result<GlobalHandle<HostObject<T>>, GCError> {
+    ) -> Result<GlobalHandle, GCError> {
         let ptr = self
             .allocate_object::<HostObject<T>>(ObjectType::Host)?
             .into();
@@ -270,62 +268,123 @@ impl Heap {
     }
 }
 
+// Rename as Root
 #[derive(Debug)]
-pub struct GlobalHandle<T> {
+pub struct GlobalHandle {
     inner: Arc<RefCell<HeapInner>>,
     index: usize,
-    phantom: PhantomData<T>,
 }
 
 // FIXME: Drop the T, GlobalHandle is always to a Value.
-impl<T> GlobalHandle<T> {
-    // TODO: These should actually return a HeapRef<T> that prevents GC while
-    // the reference is alive.
-    pub fn get(&self) -> &T {
-        let inner = self.inner.borrow();
-        let cell = inner.globals[self.index].as_ref().unwrap();
-        // If this line panics, it's because the value isn't really an object.
-        let object_ptr: ObjectPtr = cell.ptr.try_into().unwrap();
-        unsafe { &*(object_ptr.addr() as *const T) }
-    }
+impl GlobalHandle {
+    // // TODO: These should actually return a HeapRef<T> that prevents GC while
+    // // the reference is alive.
+    // pub fn get(&self) -> &T {
+    //     let inner = self.inner.borrow();
+    //     let cell = inner.globals[self.index].as_ref().unwrap();
+    //     // If this line panics, it's because the value isn't really an object.
+    //     let object_ptr: ObjectPtr = cell.ptr.try_into().unwrap();
+    //     unsafe { &*(object_ptr.addr() as *const T) }
+    // }
 
-    // TODO: These should actually return a HeapRef<T> that prevents GC while
-    // the reference is alive.
-    pub fn get_mut(&mut self) -> &mut T {
-        let inner = self.inner.borrow();
-        let cell = inner.globals[self.index].as_ref().unwrap();
-        // If this line panics, it's because the value isn't really an object.
-        let object_ptr: ObjectPtr = cell.ptr.try_into().unwrap();
-        unsafe { &mut *(object_ptr.addr() as *mut T) }
-    }
+    // // TODO: These should actually return a HeapRef<T> that prevents GC while
+    // // the reference is alive.
+    // pub fn get_mut(&mut self) -> &mut T {
+    //     let inner = self.inner.borrow();
+    //     let cell = inner.globals[self.index].as_ref().unwrap();
+    //     // If this line panics, it's because the value isn't really an object.
+    //     let object_ptr: ObjectPtr = cell.ptr.try_into().unwrap();
+    //     unsafe { &mut *(object_ptr.addr() as *mut T) }
+    // }
 
-    // TODO: Remove once we have a Value enum.
-    #[cfg(test)]
-    pub fn get_tagged_ptr(&self) -> TaggedPtr {
+    pub fn ptr(&self) -> TaggedPtr {
         let inner = self.inner.borrow();
         let cell = inner.globals[self.index].as_ref().unwrap();
         cell.ptr
     }
 }
 
-impl<T> Drop for GlobalHandle<T> {
+impl Drop for GlobalHandle {
     fn drop(&mut self) {
         self.inner.borrow_mut().globals[self.index] = None;
     }
 }
 
-impl<T: Traceable> GlobalHandle<HostObject<T>> {
-    pub fn get_object(&self) -> &T {
-        let value_index = self.get().value_index;
-        let inner = self.inner.borrow();
-        let cell = inner.object_cells[value_index].as_ref().unwrap();
-        let value = cell.value.as_ref();
-        let ptr = value.as_any().downcast_ref().unwrap() as *const T;
-        unsafe { &*ptr }
+impl GlobalHandle {
+    // pub fn get_object(&self) -> &T {
+    //     let value_index = self.get().value_index;
+    //     let inner = self.inner.borrow();
+    //     let cell = inner.object_cells[value_index].as_ref().unwrap();
+    //     let value = cell.value.as_ref();
+    //     let ptr = value.as_any().downcast_ref().unwrap() as *const T;
+    //     unsafe { &*ptr }
+    // }
+}
+
+struct HandleScope {
+    inner: Arc<RefCell<HeapInner>>,
+    index: usize,
+}
+
+impl HandleScope {
+    fn new(heap: &Heap) -> HandleScope {
+        let mut inner = heap.inner.borrow_mut();
+        let index = inner.scopes.len();
+        inner.scopes.push(vec![]);
+        HandleScope {
+            inner: Arc::clone(&heap.inner),
+            index,
+        }
+    }
+
+    fn add(&self, ptr: TaggedPtr) -> usize {
+        let mut inner = self.inner.borrow_mut();
+        let cells = &mut inner.scopes[self.index];
+        let index = cells.len();
+        cells.push(HeapCell { ptr });
+        index
+    }
+
+    fn get(&self, handle: &GlobalHandle) -> LocalHandle {
+        LocalHandle::new(self, handle.ptr())
     }
 }
 
-// TODO: Add HandleScope and LocalHandle.
+impl Drop for HandleScope {
+    fn drop(&mut self) {
+        let mut inner = self.inner.borrow_mut();
+        inner.scopes.pop();
+    }
+}
+
+// Is this really "ValueRef"?
+enum Value<'a> {
+    Number(i32),
+    List(&'a List),
+}
+
+enum MutValue<'a> {
+    Number(i32),
+    List(&'a mut List),
+}
+
+struct LocalHandle<'a> {
+    scope: &'a HandleScope,
+    index: usize,
+}
+
+impl<'a> LocalHandle<'a> {
+    fn new(scope: &'a HandleScope, ptr: TaggedPtr) -> LocalHandle<'a> {
+        LocalHandle {
+            scope: scope,
+            index: scope.add(ptr),
+        }
+    }
+
+    fn get(&self) -> Value {}
+
+    fn get_mut(&self) -> MutValue {}
+}
 
 #[derive(Debug)]
 #[repr(C)]
