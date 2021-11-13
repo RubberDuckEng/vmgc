@@ -193,9 +193,9 @@ mod tests {
     fn list_push_test() {
         let mut heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
-        let list: LocalHandle = heap.allocate::<List>(&scope).unwrap();
-        let one: LocalHandle = heap.allocate_integer(&scope, 1);
-        let list_value: &List = list.as_ref::<List>().unwrap();
-        // list_value.values.push(one.into());
+        let list = heap.allocate::<List>(&scope).unwrap();
+        let one = heap.allocate_integer(&scope, 1);
+        let list_value = list.as_mut::<List>().unwrap();
+        list_value.values.push(one.into());
     }
 }

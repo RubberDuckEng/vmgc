@@ -361,9 +361,12 @@ impl<'a> LocalHandle<'a> {
         heap.alloc_global_handle(self.ptr())
     }
 
+    fn get_object_ptr(&self) -> Option<ObjectPtr> {
+        self.ptr().try_into().ok()
+    }
+
     pub fn as_ref<T: HostObject>(&self) -> Option<&T> {
-        let maybe_object_ptr: Option<ObjectPtr> = self.ptr().try_into().ok();
-        if let Some(object_ptr) = maybe_object_ptr {
+        if let Some(object_ptr) = self.get_object_ptr() {
             let header = object_ptr.header();
             // TODO: We should use a single TYPE_ID for every HostObject.
             // We only need specialized type IDs for HeapObjects.
@@ -373,11 +376,34 @@ impl<'a> LocalHandle<'a> {
 
             // TODO: This should be made more type safe. See similar code in collect().
             let value_index = unsafe { *(object_ptr.addr() as *const usize) };
+
             let inner = self.scope.inner.borrow();
             let cell = inner.object_cells[value_index].as_ref().unwrap();
             let value = cell.value.as_ref();
             let ptr = value.as_any().downcast_ref().unwrap() as *const T;
             Some(unsafe { &*ptr })
+        } else {
+            None
+        }
+    }
+
+    pub fn as_mut<T: HostObject>(&self) -> Option<&mut T> {
+        if let Some(object_ptr) = self.get_object_ptr() {
+            let header = object_ptr.header();
+            // TODO: We should use a single TYPE_ID for every HostObject.
+            // We only need specialized type IDs for HeapObjects.
+            if header.object_type != T::TYPE_ID {
+                return None;
+            }
+
+            // TODO: This should be made more type safe. See similar code in collect().
+            let value_index = unsafe { *(object_ptr.addr() as *const usize) };
+
+            let inner = self.scope.inner.borrow();
+            let cell = inner.object_cells[value_index].as_ref().unwrap();
+            let value = cell.value.as_ref();
+            let ptr = value.as_any().downcast_ref().unwrap() as *const T as *mut T;
+            Some(unsafe { &mut *ptr })
         } else {
             None
         }
