@@ -4,6 +4,7 @@ use crate::types::*;
 // ObjectPtr could have a generation number, and thus we could know
 // if we ever forgot one between generations (and thus was invalid).
 #[derive(Copy, Clone, Debug)]
+#[repr(transparent)]
 pub struct ObjectPtr(*mut u8);
 
 impl ObjectPtr {
@@ -25,6 +26,7 @@ impl ObjectPtr {
 }
 
 #[derive(Copy, Clone, Debug)]
+#[repr(transparent)]
 pub struct HeaderPtr(*mut u8);
 
 impl HeaderPtr {

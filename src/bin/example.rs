@@ -83,3 +83,18 @@ fn main() {
         println!("1 + 2 = {}", result);
     }
 }
+
+// Null,
+// Num(f64),
+// Boolean(bool),
+// String(Rc<String>),
+// // Split these off and replace with Object(Handle<dyn Obj>)
+// Class(Handle<ObjClass>),
+// Range(Handle<ObjRange>),
+// Fn(Handle<ObjFn>),
+// Closure(Handle<ObjClosure>),
+// List(Handle<ObjList>),
+// Map(Handle<ObjMap>),
+// Fiber(Handle<ObjFiber>),
+// Instance(Handle<ObjInstance>),
+// Foreign(Handle<ObjForeign>),

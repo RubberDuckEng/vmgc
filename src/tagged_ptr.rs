@@ -15,24 +15,41 @@ impl TaggedPtr {
     pub fn header(&self) -> Option<&mut ObjectHeader> {
         (*self).try_into().ok().map(ObjectHeader::from_object_ptr)
     }
+
+    #[inline]
+    fn get_tag(&self) -> usize {
+        unsafe { self.tag & TAG_MASK }
+    }
+
+    #[inline]
+    fn has_tag(&self, tag: usize) -> bool {
+        self.get_tag() == tag
+    }
+
+    pub fn is_null(&self) -> bool {
+        self.has_tag(TAG_NULL)
+    }
 }
 
 impl Default for TaggedPtr {
     fn default() -> Self {
-        TaggedPtr { tag: 0 }
+        TaggedPtr { tag: TAG_NULL }
     }
 }
 
 const TAG_MASK: usize = 0x3;
-const TAG_NUMBER: usize = 0x0;
-const TAG_OBJECT: usize = 0x1;
+const TAG_NULL: usize = 0x0;
+const TAG_NUMBER: usize = 0x1;
+const TAG_OBJECT: usize = 0x2;
 const PTR_MASK: usize = !0x3;
 
 impl From<i32> for TaggedPtr {
     fn from(value: i32) -> TaggedPtr {
-        TaggedPtr {
+        let mut ptr = TaggedPtr {
             number: (value as isize) << 2,
-        }
+        };
+        unsafe { ptr.tag |= TAG_NUMBER };
+        ptr
     }
 }
 
@@ -40,7 +57,7 @@ impl TryInto<i32> for TaggedPtr {
     type Error = GCError;
     fn try_into(self) -> Result<i32, GCError> {
         unsafe {
-            match self.tag & TAG_MASK {
+            match self.get_tag() {
                 TAG_NUMBER => Ok((self.number >> 2) as i32),
                 _ => Err(GCError::TypeError),
             }
@@ -62,7 +79,7 @@ impl TryInto<ObjectPtr> for TaggedPtr {
     type Error = GCError;
     fn try_into(self) -> Result<ObjectPtr, GCError> {
         unsafe {
-            match self.tag & TAG_MASK {
+            match self.get_tag() {
                 TAG_OBJECT => Ok(std::mem::transmute::<usize, ObjectPtr>(
                     self.object & PTR_MASK,
                 )),
@@ -75,5 +92,17 @@ impl TryInto<ObjectPtr> for TaggedPtr {
 impl std::fmt::Debug for TaggedPtr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TaggedPtr").finish()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    pub fn null_test() {
+        assert!(TaggedPtr::default().is_null());
+        let zero: TaggedPtr = 0.into();
+        assert!(!zero.is_null());
     }
 }
