@@ -83,21 +83,26 @@ mod tests {
 
     // impl Traceable for HostNumber {}
 
-    // #[test]
-    // pub fn smoke_test() {
-    //     let mut heap = Heap::new(1000).unwrap();
-    //     assert_eq!(heap.used(), 0);
-    //     let one = heap.allocate_global::<Number>().unwrap();
-    //     let two = heap.allocate_global::<Number>().unwrap();
-    //     std::mem::drop(one);
-    //     assert_eq!(
-    //         heap.used(),
-    //         (HEADER_SIZE + std::mem::size_of::<Number>()) * 2
-    //     );
-    //     heap.collect().ok();
-    //     assert_eq!(heap.used(), HEADER_SIZE + std::mem::size_of::<Number>());
-    //     std::mem::drop(two);
-    // }
+    #[test]
+    pub fn smoke_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        assert_eq!(heap.used(), 0);
+        let two = {
+            let scope = HandleScope::new(&heap);
+            let one = heap.allocate::<DropObject>(&scope).unwrap();
+            let two = heap.allocate::<DropObject>(&scope).unwrap();
+            std::mem::drop(one);
+            two.to_global(&heap)
+        };
+        let used_before_collection = heap.used();
+        heap.collect().unwrap();
+        let used_after_collection = heap.used();
+        assert!(0 < used_after_collection);
+        assert!(used_before_collection > used_after_collection);
+        std::mem::drop(two);
+        heap.collect().unwrap();
+        assert_eq!(0, heap.used());
+    }
 
     #[test]
     fn finalizer_test() {
