@@ -1,4 +1,4 @@
-use std::convert::{From, TryInto};
+use std::convert::{From, TryFrom, TryInto};
 
 use crate::object::{ObjectHeader, ObjectPtr};
 use crate::types::*;
@@ -18,9 +18,9 @@ const PTR_TAG_MASK: usize = SIGN_MASK | QUIET_NAN_MASK;
 const PTR_MASK: usize = !PTR_TAG_MASK;
 
 // Used for identifying singletons.  All singletons have quiet nan bits set.
-const SINGLETON_TAG_MASK: usize = 7;
+// const SINGLETON_TAG_MASK: usize = 7;
 
-const TAG_NAN: usize = 0;
+// const TAG_NAN: usize = 0;
 const TAG_NULL: usize = 1;
 const TAG_FALSE: usize = 2;
 const TAG_TRUE: usize = 3;
@@ -50,21 +50,22 @@ impl TaggedNum {
         unsafe { (self.bits & PTR_TAG_MASK) == PTR_TAG_MASK }
     }
 
-    fn is_false(&self) -> bool {
+    fn is_true_singleton(&self) -> bool {
+        unsafe { self.bits == TaggedNum::TRUE.bits }
+    }
+
+    fn is_false_singleton(&self) -> bool {
         unsafe { self.bits == TaggedNum::FALSE.bits }
     }
+
+    #[cfg(test)]
     fn is_null(&self) -> bool {
         unsafe { self.bits == TaggedNum::NULL.bits }
     }
 
-    // Should this be From/Into?
-    fn as_bool(&self) -> bool {
-        unsafe { self.bits == TaggedNum::TRUE.bits }
-    }
-
-    fn singleton_tag(&self) -> usize {
-        unsafe { self.bits & SINGLETON_TAG_MASK }
-    }
+    // fn singleton_tag(&self) -> usize {
+    //     unsafe { self.bits & SINGLETON_TAG_MASK }
+    // }
 
     pub fn header(&self) -> Option<&mut ObjectHeader> {
         (*self).try_into().ok().map(ObjectHeader::from_object_ptr)
@@ -106,9 +107,19 @@ impl From<bool> for TaggedNum {
     }
 }
 
-impl From<TaggedNum> for bool {
-    fn from(item: TaggedNum) -> Self {
-        item.as_bool()
+// This is only TryFrom instead of From, because the caller needs to determine
+// what is "truthy" or "falsey" this only converts to bools when was was stored
+// was true or false.
+impl TryFrom<TaggedNum> for bool {
+    type Error = GCError;
+    fn try_from(tagged: TaggedNum) -> Result<bool, GCError> {
+        if tagged.is_true_singleton() {
+            Ok(true)
+        } else if tagged.is_false_singleton() {
+            Ok(false)
+        } else {
+            Err(GCError::TypeError)
+        }
     }
 }
 
@@ -122,13 +133,13 @@ impl From<ObjectPtr> for TaggedNum {
     }
 }
 
-impl TryInto<ObjectPtr> for TaggedNum {
+impl TryFrom<TaggedNum> for ObjectPtr {
     type Error = GCError;
-    fn try_into(self) -> Result<ObjectPtr, GCError> {
+    fn try_from(tagged: TaggedNum) -> Result<ObjectPtr, GCError> {
         unsafe {
-            if self.is_ptr() {
+            if tagged.is_ptr() {
                 Ok(std::mem::transmute::<usize, ObjectPtr>(
-                    self.bits & PTR_MASK,
+                    tagged.bits & PTR_MASK,
                 ))
             } else {
                 Err(GCError::TypeError)
@@ -163,9 +174,19 @@ mod tests {
 
     #[test]
     pub fn truthiness_test() {
-        assert_eq!(bool::from(TaggedNum::NULL), false);
-        assert_eq!(bool::from(TaggedNum::TRUE), true);
-        assert_eq!(bool::from(TaggedNum::FALSE), false);
-        // FIXME: Test pointers too.
+        // This layer intentionally only gives an answer for True and False
+        // and leaves what else is "truthy" or "falsey" to the caller.
+        assert_eq!(bool::try_from(TaggedNum::FALSE).unwrap(), false);
+        assert_eq!(bool::try_from(TaggedNum::TRUE).unwrap(), true);
+        assert_eq!(bool::try_from(TaggedNum::NULL).ok(), None);
+
+        // Try round-tripping a pointer as well.
+        let boxed = Box::new(1);
+        let ptr = ObjectPtr::new(Box::into_raw(boxed));
+        let tagged = TaggedNum::from(ptr);
+        assert_eq!(bool::try_from(tagged).ok(), None);
+        let ptr: ObjectPtr = tagged.try_into().unwrap();
+        let boxed = unsafe { Box::from_raw(ptr.addr()) };
+        assert_eq!(*boxed, 1);
     }
 }

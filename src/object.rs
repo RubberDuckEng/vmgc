@@ -8,7 +8,8 @@ use crate::types::*;
 pub struct ObjectPtr(*mut u8);
 
 impl ObjectPtr {
-    fn new(addr: *mut u8) -> ObjectPtr {
+    // public only for testing.
+    pub fn new(addr: *mut u8) -> ObjectPtr {
         ObjectPtr(addr)
     }
 

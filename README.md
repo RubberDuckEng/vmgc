@@ -10,6 +10,5 @@ Inspired in part by https://rust-hosted-langs.github.io/book/introduction.html
 * Alignment for allocations
 * Generational collection
 * Thread safety
-* Move to f64 for numbers.
 * Smarter size specification for Heap size (max size?)
 * Provide allocator for Heap?
