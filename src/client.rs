@@ -158,7 +158,9 @@ mod tests {
         heap.collect().ok();
         assert_eq!(used, heap.used());
         std::mem::drop(handle);
+        heap.collect().ok();
         assert_eq!(used, heap.used());
+        std::mem::drop(scope);
         heap.collect().ok();
         assert_eq!(0, heap.used());
     }

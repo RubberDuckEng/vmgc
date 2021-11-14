@@ -69,8 +69,11 @@ struct HeapCell {
 }
 
 impl HeapCell {
-    fn header(&self) -> Option<&mut ObjectHeader> {
-        self.ptr.header()
+    fn visit(&mut self, visitor: &mut ObjectVisitor) {
+        let maybe_object_ptr: Option<ObjectPtr> = self.ptr.try_into().ok();
+        if let Some(object_ptr) = maybe_object_ptr {
+            self.ptr = visitor.visit_header(object_ptr.header()).into();
+        }
     }
 }
 
@@ -130,6 +133,21 @@ impl ObjectVisitor {
             handle.ptr = self.visit_header(header).into();
         }
     }
+
+    fn visit_cells(&mut self, cells: &mut Vec<HeapCell>) {
+        for index in 0..cells.len() {
+            let cell = &mut cells[index];
+            cell.visit(self);
+        }
+    }
+
+    fn visit_maybe_cells(&mut self, cells: &mut Vec<Option<HeapCell>>) {
+        for index in 0..cells.len() {
+            if let Some(cell) = &mut cells[index] {
+                cell.visit(self);
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -154,16 +172,14 @@ impl Heap {
 
     pub fn collect(&mut self) -> Result<(), GCError> {
         let mut visitor = ObjectVisitor::new(Space::new(self.space.size)?);
-        let mut globals = vec![];
-        std::mem::swap(&mut globals, &mut self.inner.borrow_mut().globals);
-        for maybe_cell in globals.iter_mut() {
-            if let Some(cell) = maybe_cell {
-                if let Some(header) = cell.header() {
-                    cell.ptr = visitor.visit_header(header).into();
-                }
+        {
+            let mut inner = self.inner.borrow_mut();
+            visitor.visit_maybe_cells(&mut inner.globals);
+            for scope in inner.scopes.iter_mut() {
+                // FIXME:  Scope should be an object, not a vec here.
+                visitor.visit_cells(scope);
             }
         }
-        std::mem::swap(&mut globals, &mut self.inner.borrow_mut().globals);
 
         while let Some(object_ptr) = visitor.queue.pop_front() {
             let value_index = unsafe { *(object_ptr.addr() as *const usize) };
