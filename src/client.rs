@@ -99,45 +99,21 @@ mod tests {
     //     std::mem::drop(two);
     // }
 
-    // #[test]
-    // fn finalizer_test() {
-    //     let mut heap = Heap::new(1000).unwrap();
-    //     let counter = Rc::new(Cell::new(0));
-    //     let host = Box::new(DropObject {
-    //         counter: Rc::clone(&counter),
-    //     });
+    #[test]
+    fn finalizer_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        let counter = Rc::new(Cell::new(0));
+        let scope = HandleScope::new(&heap);
 
-    //     let handle = heap.alloc_host_object(host);
-    //     std::mem::drop(handle);
-    //     assert_eq!(0u32, counter.get());
-    //     heap.collect().ok();
-    //     assert_eq!(1u32, counter.get());
-    // }
-
-    // #[test]
-    // fn number_value_test() {
-    //     let mut heap = Heap::new(1000).unwrap();
-    //     let one = heap.allocate_global::<Number>().unwrap();
-    //     let two = heap.allocate_global::<Number>().unwrap();
-    //     one.get_mut().value = 1;
-    //     two.get_mut().value = 2;
-    //     assert_eq!(1, one.get().value);
-    //     assert_eq!(2, two.get().value);
-    //     heap.collect().ok();
-    //     assert_eq!(1, one.get().value);
-    //     assert_eq!(2, two.get().value);
-    // }
-
-    // #[test]
-    // fn number_as_host_object_test() {
-    //     let mut heap = Heap::new(1000).unwrap();
-
-    //     let num = HostNumber { value: 1 };
-    //     let number = Box::new(num);
-    //     let handle = heap.alloc_host_object(number).unwrap();
-    //     assert_eq!(1, handle.get_object().value);
-    //     std::mem::drop(handle);
-    // }
+        let handle = heap.allocate::<DropObject>(&scope).unwrap();
+        handle.as_mut::<DropObject>().unwrap().counter = Rc::clone(&counter);
+        std::mem::drop(handle);
+        assert_eq!(0u32, counter.get());
+        std::mem::drop(scope);
+        assert_eq!(0u32, counter.get());
+        heap.collect().ok();
+        assert_eq!(1u32, counter.get());
+    }
 
     #[test]
     fn tracing_test() {
@@ -208,5 +184,9 @@ mod tests {
         let one = heap.allocate_integer(&scope, 1);
         let list_value = list.as_mut::<List>().unwrap();
         list_value.values.push(one.into());
+        std::mem::drop(list_value);
+        heap.collect().ok();
+        let list_value = list.as_mut::<List>().unwrap();
+        assert_eq!(list_value.values.len(), 1);
     }
 }
