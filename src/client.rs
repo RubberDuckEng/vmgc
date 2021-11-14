@@ -84,7 +84,7 @@ mod tests {
             let one = heap.allocate::<DropObject>(&scope).unwrap();
             let two = heap.allocate::<DropObject>(&scope).unwrap();
             std::mem::drop(one);
-            two.to_global(&heap)
+            two.to_global()
         };
         let used_before_collection = heap.used();
         heap.collect().unwrap();
@@ -164,7 +164,7 @@ mod tests {
         assert_eq!(2, two_value);
         let three_value = one_value + two_value;
         let three = heap.allocate_integer(&scope, three_value);
-        let three_global = three.to_global(&heap);
+        let three_global = three.to_global();
         std::mem::drop(scope);
 
         let scope = HandleScope::new(&heap);

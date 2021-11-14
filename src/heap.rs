@@ -336,16 +336,17 @@ impl<'a> LocalHandle<'a> {
         self.scope.get_ptr(self.index)
     }
 
-    pub fn to_global(&self, heap: &Heap) -> GlobalHandle {
+    pub fn to_global(&self) -> GlobalHandle {
+        let ptr = self.ptr();
         let index = {
             // TODO: Scan for available cells.
-            let mut inner = self.inner.borrow_mut();
+            let mut inner = self.scope.inner.borrow_mut();
             let index = inner.globals.len();
-            inner.globals.push(Some(HeapCell { self.ptr() }));
+            inner.globals.push(Some(HeapCell { ptr }));
             index
         };
         GlobalHandle {
-            inner: Arc::clone(&self.inner),
+            inner: Arc::clone(&self.scope.inner),
             index,
         }
     }
