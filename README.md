@@ -13,3 +13,4 @@ Inspired in part by https://rust-hosted-langs.github.io/book/introduction.html
 * Alignment for allocations
 * Generational collection
 * Thread safety
+* Move to f64 for numbers.

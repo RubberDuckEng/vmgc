@@ -253,6 +253,10 @@ impl Heap {
     pub fn allocate_heap<T: HostObject>(&mut self) -> Result<HeapHandle, GCError> {
         Ok(HeapHandle::new(self.allocate_object::<T>()?.into()))
     }
+
+    pub fn allocate_integer_heap(&mut self, value: i32) -> HeapHandle {
+        HeapHandle::new(value.into())
+    }
 }
 
 // Rename as Root
@@ -407,13 +411,21 @@ impl<'a> TryInto<i32> for LocalHandle<'a> {
     }
 }
 
+#[derive(Default)]
+#[repr(transparent)]
 pub struct HeapHandle {
-    ptr: TaggedPtr,
+    pub ptr: TaggedPtr,
 }
 
 impl HeapHandle {
-    fn new(ptr: TaggedPtr) -> HeapHandle {
+    pub fn new(ptr: TaggedPtr) -> HeapHandle {
         HeapHandle { ptr }
+    }
+
+    pub fn take(&mut self) -> HeapHandle {
+        let result = HeapHandle::new(self.ptr);
+        self.ptr = TaggedPtr::default();
+        result
     }
 }
 
@@ -433,7 +445,7 @@ impl<T: Any> AsAny for T {
     }
 }
 pub trait Traceable: AsAny {
-    fn trace(&mut self, _visitor: &mut ObjectVisitor) {}
+    fn trace(&mut self, _visitor: &mut ObjectVisitor);
 }
 
 // We will eventually add a HeapObject as an optimization

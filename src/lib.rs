@@ -1,5 +1,5 @@
 mod client;
 pub mod heap;
-mod object;
+pub mod object;
 mod tagged_ptr;
-mod types;
+pub mod types;

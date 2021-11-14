@@ -30,7 +30,9 @@ pub struct HeapString {
     value: String,
 }
 
-impl Traceable for HeapString {}
+impl Traceable for HeapString {
+    fn trace(&mut self, _visitor: &mut ObjectVisitor) {}
+}
 
 #[derive(Default)]
 pub struct List {
@@ -38,7 +40,7 @@ pub struct List {
 }
 
 impl HostObject for List {
-    const TYPE_ID: ObjectType = ObjectType::List;
+    const TYPE_ID: ObjectType = ObjectType::Host;
 }
 
 impl Traceable for List {
@@ -63,10 +65,12 @@ mod tests {
     }
 
     impl HostObject for DropObject {
-        const TYPE_ID: ObjectType = ObjectType::Test;
+        const TYPE_ID: ObjectType = ObjectType::Host;
     }
 
-    impl Traceable for DropObject {}
+    impl Traceable for DropObject {
+        fn trace(&mut self, _visitor: &mut ObjectVisitor) {}
+    }
 
     impl Drop for DropObject {
         fn drop(&mut self) {

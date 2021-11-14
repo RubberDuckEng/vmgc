@@ -44,8 +44,7 @@ impl HeaderPtr {
 #[derive(Debug, PartialEq)]
 #[repr(u16)]
 pub enum ObjectType {
-    Test,
-    List,
+    Host,
 }
 
 #[derive(Debug)]

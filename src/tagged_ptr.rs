@@ -4,6 +4,7 @@ use crate::object::{ObjectHeader, ObjectPtr};
 use crate::types::*;
 
 #[derive(Copy, Clone)]
+#[repr(C)]
 pub union TaggedPtr {
     tag: usize,
     number: isize,
@@ -13,6 +14,12 @@ pub union TaggedPtr {
 impl TaggedPtr {
     pub fn header(&self) -> Option<&mut ObjectHeader> {
         (*self).try_into().ok().map(ObjectHeader::from_object_ptr)
+    }
+}
+
+impl Default for TaggedPtr {
+    fn default() -> Self {
+        TaggedPtr { tag: 0 }
     }
 }
 
