@@ -57,8 +57,6 @@ mod tests {
     use std::convert::TryInto;
     use std::rc::Rc;
 
-    // use crate::object::HEADER_SIZE;
-
     #[derive(Default)]
     struct DropObject {
         counter: Rc<Cell<u32>>,
@@ -76,12 +74,6 @@ mod tests {
             self.counter.set(counter + 1);
         }
     }
-
-    // struct HostNumber {
-    //     value: u64,
-    // }
-
-    // impl Traceable for HostNumber {}
 
     #[test]
     pub fn smoke_test() {

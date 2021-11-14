@@ -253,22 +253,6 @@ impl Heap {
     pub fn allocate_heap<T: HostObject>(&mut self) -> Result<HeapHandle, GCError> {
         Ok(HeapHandle::new(self.allocate_object::<T>()?.into()))
     }
-
-    // Wraps a given TaggedPtr in a handle.
-    // TODO: Move to LocalHandle.
-    fn alloc_global_handle(&self, ptr: TaggedPtr) -> GlobalHandle {
-        let index = {
-            // TODO: Scan for available cells.
-            let mut inner = self.inner.borrow_mut();
-            let index = inner.globals.len();
-            inner.globals.push(Some(HeapCell { ptr }));
-            index
-        };
-        GlobalHandle {
-            inner: Arc::clone(&self.inner),
-            index,
-        }
-    }
 }
 
 // Rename as Root
@@ -278,29 +262,8 @@ pub struct GlobalHandle {
     index: usize,
 }
 
-// FIXME: Drop the T, GlobalHandle is always to a Value.
 impl GlobalHandle {
-    // // TODO: These should actually return a HeapRef<T> that prevents GC while
-    // // the reference is alive.
-    // pub fn get(&self) -> &T {
-    //     let inner = self.inner.borrow();
-    //     let cell = inner.globals[self.index].as_ref().unwrap();
-    //     // If this line panics, it's because the value isn't really an object.
-    //     let object_ptr: ObjectPtr = cell.ptr.try_into().unwrap();
-    //     unsafe { &*(object_ptr.addr() as *const T) }
-    // }
-
-    // // TODO: These should actually return a HeapRef<T> that prevents GC while
-    // // the reference is alive.
-    // pub fn get_mut(&mut self) -> &mut T {
-    //     let inner = self.inner.borrow();
-    //     let cell = inner.globals[self.index].as_ref().unwrap();
-    //     // If this line panics, it's because the value isn't really an object.
-    //     let object_ptr: ObjectPtr = cell.ptr.try_into().unwrap();
-    //     unsafe { &mut *(object_ptr.addr() as *mut T) }
-    // }
-
-    pub fn ptr(&self) -> TaggedPtr {
+    fn ptr(&self) -> TaggedPtr {
         let inner = self.inner.borrow();
         let cell = inner.globals[self.index].as_ref().unwrap();
         cell.ptr
@@ -374,7 +337,17 @@ impl<'a> LocalHandle<'a> {
     }
 
     pub fn to_global(&self, heap: &Heap) -> GlobalHandle {
-        heap.alloc_global_handle(self.ptr())
+        let index = {
+            // TODO: Scan for available cells.
+            let mut inner = self.inner.borrow_mut();
+            let index = inner.globals.len();
+            inner.globals.push(Some(HeapCell { self.ptr() }));
+            index
+        };
+        GlobalHandle {
+            inner: Arc::clone(&self.inner),
+            index,
+        }
     }
 
     fn get_object_ptr(&self) -> Option<ObjectPtr> {
