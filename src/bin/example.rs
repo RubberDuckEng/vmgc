@@ -40,8 +40,8 @@ fn init() -> VM {
 }
 
 fn num_add(_vm: &mut VM, args: &[HeapHandle], out: &mut HeapHandle) -> Result<(), GCError> {
-    let lhs: i32 = args[0].ptr.try_into()?;
-    let rhs: i32 = args[1].ptr.try_into()?;
+    let lhs: f64 = args[0].ptr.try_into()?;
+    let rhs: f64 = args[1].ptr.try_into()?;
     out.ptr = (lhs + rhs).into();
     Ok(())
 }
@@ -55,8 +55,8 @@ fn main() {
         let stack_handle = scope.get(&vm.stack);
         let stack = stack_handle.as_mut::<Stack>().unwrap();
 
-        stack.values.push(HeapHandle::new(1.into()));
-        stack.values.push(HeapHandle::new(2.into()));
+        stack.values.push(HeapHandle::new(1.0.into()));
+        stack.values.push(HeapHandle::new(2.0.into()));
     }
     vm.heap.collect().ok();
 
@@ -79,7 +79,7 @@ fn main() {
         let stack_handle = scope.get(&vm.stack);
         let stack = stack_handle.as_mut::<Stack>().unwrap();
 
-        let result: i32 = stack.values[0].ptr.try_into().unwrap();
+        let result: f64 = stack.values[0].ptr.try_into().unwrap();
         println!("1 + 2 = {}", result);
     }
 }

@@ -147,25 +147,25 @@ mod tests {
         let mut heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
 
-        let a = heap.allocate_integer(&scope, 1);
-        let b = heap.allocate_integer(&scope, 2);
+        let a = heap.allocate_integer(&scope, 1.0);
+        let b = heap.allocate_integer(&scope, 2.0);
         assert_eq!(0, heap.used());
-        let a_value: i32 = a.ptr().try_into().unwrap();
-        assert_eq!(1, a_value);
-        let b_value: i32 = b.ptr().try_into().unwrap();
-        assert_eq!(2, b_value);
+        let a_value: f64 = a.ptr().try_into().unwrap();
+        assert_eq!(1.0, a_value);
+        let b_value: f64 = b.ptr().try_into().unwrap();
+        assert_eq!(2.0, b_value);
     }
 
     #[test]
-    fn add_i32_test() {
+    fn add_f64_test() {
         let mut heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
-        let one = heap.allocate_integer(&scope, 1);
-        let two = heap.allocate_integer(&scope, 2);
-        let one_value: i32 = one.try_into().unwrap();
-        assert_eq!(1, one_value);
-        let two_value: i32 = two.try_into().unwrap();
-        assert_eq!(2, two_value);
+        let one = heap.allocate_integer(&scope, 1.0);
+        let two = heap.allocate_integer(&scope, 2.0);
+        let one_value: f64 = one.try_into().unwrap();
+        assert_eq!(1.0, one_value);
+        let two_value: f64 = two.try_into().unwrap();
+        assert_eq!(2.0, two_value);
         let three_value = one_value + two_value;
         let three = heap.allocate_integer(&scope, three_value);
         let three_global = three.to_global();
@@ -173,8 +173,8 @@ mod tests {
 
         let scope = HandleScope::new(&heap);
         let three = scope.get(&three_global);
-        let three_value: i32 = three.try_into().unwrap();
-        assert_eq!(3, three_value);
+        let three_value: f64 = three.try_into().unwrap();
+        assert_eq!(3.0, three_value);
     }
 
     #[test]
@@ -182,7 +182,7 @@ mod tests {
         let mut heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
         let list = heap.allocate::<List>(&scope).unwrap();
-        let one = heap.allocate_integer(&scope, 1);
+        let one = heap.allocate_integer(&scope, 1.0);
         let list_value = list.as_mut::<List>().unwrap();
         list_value.values.push(one.into());
         std::mem::drop(list_value);

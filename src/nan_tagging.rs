@@ -65,6 +65,10 @@ impl TaggedNum {
     fn singleton_tag(&self) -> usize {
         unsafe { self.bits & SINGLETON_TAG_MASK }
     }
+
+    pub fn header(&self) -> Option<&mut ObjectHeader> {
+        (*self).try_into().ok().map(ObjectHeader::from_object_ptr)
+    }
 }
 
 impl Default for TaggedNum {
@@ -114,6 +118,12 @@ impl TryInto<ObjectPtr> for TaggedNum {
                 Err(GCError::TypeError)
             }
         }
+    }
+}
+
+impl std::fmt::Debug for TaggedNum {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("TaggedNum").finish()
     }
 }
 

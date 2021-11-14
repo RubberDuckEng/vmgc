@@ -6,9 +6,11 @@ use std::convert::TryInto;
 // use std::ptr::NonNull;
 use std::sync::Arc;
 
+use crate::nan_tagging::TaggedNum;
 use crate::object::*;
-use crate::tagged_ptr::TaggedPtr;
 use crate::types::*;
+
+type TaggedPtr = TaggedNum;
 
 #[derive(Debug)]
 pub struct Space {
@@ -246,7 +248,7 @@ impl Heap {
     }
 
     // FIXME: Move to HandleScope.
-    pub fn allocate_integer<'a>(&mut self, scope: &'a HandleScope, value: i32) -> LocalHandle<'a> {
+    pub fn allocate_integer<'a>(&mut self, scope: &'a HandleScope, value: f64) -> LocalHandle<'a> {
         LocalHandle::new(scope, value.into())
     }
 
@@ -254,7 +256,7 @@ impl Heap {
         Ok(HeapHandle::new(self.allocate_object::<T>()?.into()))
     }
 
-    pub fn allocate_integer_heap(&mut self, value: i32) -> HeapHandle {
+    pub fn allocate_integer_heap(&mut self, value: f64) -> HeapHandle {
         HeapHandle::new(value.into())
     }
 }
@@ -404,9 +406,9 @@ impl<'a> LocalHandle<'a> {
     }
 }
 
-impl<'a> TryInto<i32> for LocalHandle<'a> {
+impl<'a> TryInto<f64> for LocalHandle<'a> {
     type Error = GCError;
-    fn try_into(self) -> Result<i32, GCError> {
+    fn try_into(self) -> Result<f64, GCError> {
         self.ptr().try_into()
     }
 }
