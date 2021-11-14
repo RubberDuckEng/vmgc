@@ -96,17 +96,21 @@ impl TryInto<f64> for TaggedNum {
     }
 }
 
-// impl From<bool> for TaggedNum {
-//     fn from(value: bool) -> TaggedNum {
-//         TaggedNum { number: value }
-//     }
-// }
+impl From<bool> for TaggedNum {
+    fn from(value: bool) -> TaggedNum {
+        if value {
+            TaggedNum::TRUE
+        } else {
+            TaggedNum::FALSE
+        }
+    }
+}
 
-// impl From<TaggedNum> for bool {
-//     fn from(item: TaggedNum) -> Self {
-//         item.as_bool()
-//     }
-// }
+impl From<TaggedNum> for bool {
+    fn from(item: TaggedNum) -> Self {
+        item.as_bool()
+    }
+}
 
 impl From<ObjectPtr> for TaggedNum {
     fn from(ptr: ObjectPtr) -> TaggedNum {
@@ -155,5 +159,13 @@ mod tests {
         assert!(TaggedNum::default().is_null());
         let zero: TaggedNum = 0.0.into();
         assert!(!zero.is_null());
+    }
+
+    #[test]
+    pub fn truthiness_test() {
+        assert_eq!(bool::from(TaggedNum::NULL), false);
+        assert_eq!(bool::from(TaggedNum::TRUE), true);
+        assert_eq!(bool::from(TaggedNum::FALSE), false);
+        // FIXME: Test pointers too.
     }
 }

@@ -46,11 +46,11 @@ fn num_add(_vm: &mut VM, args: &[HeapHandle], out: &mut HeapHandle) -> Result<()
     Ok(())
 }
 
-// fn num_is_nan(_vm: &mut VM, args: &[HeapHandle], out: &mut HeapHandle) -> Result<(), GCError> {
-//     let num: f64 = args[0].ptr.try_into()?;
-//     out.ptr = num.is_nan().into();
-//     Ok(())
-// }
+fn num_is_nan(_vm: &mut VM, args: &[HeapHandle], out: &mut HeapHandle) -> Result<(), GCError> {
+    let num: f64 = args[0].ptr.try_into()?;
+    out.ptr = num.is_nan().into();
+    Ok(())
+}
 
 fn main() {
     let mut vm = init();
@@ -89,28 +89,28 @@ fn main() {
         println!("1 + 2 = {}", result);
     }
 
-    // vm.heap.collect().ok();
-    // // call is_nan function
-    // {
-    //     let scope = HandleScope::new(&vm.heap);
-    //     let stack_handle = scope.get(&vm.stack);
-    //     let stack = stack_handle.as_mut::<Stack>().unwrap();
+    vm.heap.collect().ok();
+    // call is_nan function
+    {
+        let scope = HandleScope::new(&vm.heap);
+        let stack_handle = scope.get(&vm.stack);
+        let stack = stack_handle.as_mut::<Stack>().unwrap();
 
-    //     num_is_nan(&mut vm, &stack.values[..], &mut stack.pending_result).ok();
+        num_is_nan(&mut vm, &stack.values[..], &mut stack.pending_result).ok();
 
-    //     stack.values.truncate(0);
-    //     stack.values.push(stack.pending_result.take());
-    // }
+        stack.values.truncate(0);
+        stack.values.push(stack.pending_result.take());
+    }
 
-    // // expect a single bool (false) on the stack.
-    // {
-    //     let scope = HandleScope::new(&vm.heap);
-    //     let stack_handle = scope.get(&vm.stack);
-    //     let stack = stack_handle.as_mut::<Stack>().unwrap();
+    // expect a single bool (false) on the stack.
+    {
+        let scope = HandleScope::new(&vm.heap);
+        let stack_handle = scope.get(&vm.stack);
+        let stack = stack_handle.as_mut::<Stack>().unwrap();
 
-    //     let result: bool = stack.values[0].ptr.try_into().unwrap();
-    //     println!("3.is_nan = {}", result);
-    // }
+        let result: bool = stack.values[0].ptr.try_into().unwrap();
+        println!("3.is_nan = {}", result);
+    }
 }
 
 // Null,
