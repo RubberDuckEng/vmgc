@@ -248,7 +248,7 @@ impl Heap {
     }
 
     // FIXME: Move to HandleScope.
-    pub fn allocate_integer<'a>(&mut self, scope: &'a HandleScope, value: f64) -> LocalHandle<'a> {
+    pub fn allocate_num<'a>(&mut self, scope: &'a HandleScope, value: f64) -> LocalHandle<'a> {
         LocalHandle::new(scope, value.into())
     }
 
@@ -256,7 +256,7 @@ impl Heap {
         Ok(HeapHandle::new(self.allocate_object::<T>()?.into()))
     }
 
-    pub fn allocate_integer_heap(&mut self, value: f64) -> HeapHandle {
+    pub fn allocate_num_heap(&mut self, value: f64) -> HeapHandle {
         HeapHandle::new(value.into())
     }
 }

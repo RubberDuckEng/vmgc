@@ -147,8 +147,8 @@ mod tests {
         let mut heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
 
-        let a = heap.allocate_integer(&scope, 1.0);
-        let b = heap.allocate_integer(&scope, 2.0);
+        let a = heap.allocate_num(&scope, 1.0);
+        let b = heap.allocate_num(&scope, 2.0);
         assert_eq!(0, heap.used());
         let a_value: f64 = a.ptr().try_into().unwrap();
         assert_eq!(1.0, a_value);
@@ -160,14 +160,14 @@ mod tests {
     fn add_f64_test() {
         let mut heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
-        let one = heap.allocate_integer(&scope, 1.0);
-        let two = heap.allocate_integer(&scope, 2.0);
+        let one = heap.allocate_num(&scope, 1.0);
+        let two = heap.allocate_num(&scope, 2.0);
         let one_value: f64 = one.try_into().unwrap();
         assert_eq!(1.0, one_value);
         let two_value: f64 = two.try_into().unwrap();
         assert_eq!(2.0, two_value);
         let three_value = one_value + two_value;
-        let three = heap.allocate_integer(&scope, three_value);
+        let three = heap.allocate_num(&scope, three_value);
         let three_global = three.to_global();
         std::mem::drop(scope);
 
@@ -182,7 +182,7 @@ mod tests {
         let mut heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
         let list = heap.allocate::<List>(&scope).unwrap();
-        let one = heap.allocate_integer(&scope, 1.0);
+        let one = heap.allocate_num(&scope, 1.0);
         let list_value = list.as_mut::<List>().unwrap();
         list_value.values.push(one.into());
         std::mem::drop(list_value);

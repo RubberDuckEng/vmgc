@@ -96,6 +96,18 @@ impl TryInto<f64> for TaggedNum {
     }
 }
 
+// impl From<bool> for TaggedNum {
+//     fn from(value: bool) -> TaggedNum {
+//         TaggedNum { number: value }
+//     }
+// }
+
+// impl From<TaggedNum> for bool {
+//     fn from(item: TaggedNum) -> Self {
+//         item.as_bool()
+//     }
+// }
+
 impl From<ObjectPtr> for TaggedNum {
     fn from(ptr: ObjectPtr) -> TaggedNum {
         unsafe {
