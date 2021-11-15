@@ -113,6 +113,18 @@ fn main() {
     }
 }
 
+// Need to explain what each use of:
+// Value::String(foo)
+//  -- This probably becomes Value::newString(scope, string)?
+//  -- fn newString(scope, string) -> Handle?
+// match on Value types
+//  -- Is value just TaggedNum/TaggedPtr?
+//  -- Is this a match on value.type()?
+// etc.
+// Maps to in wren.
+// Or does Value just no longer exist and we use Handles instead?
+
+// safe_wren Value types:
 // Null,
 // Num(f64),
 // Boolean(bool),
