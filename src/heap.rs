@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::convert::TryInto;
 // use std::ptr::NonNull;
+use std::convert::AsMut;
 use std::sync::Arc;
 
 use crate::object::*;
@@ -73,8 +74,46 @@ impl HeapHandle {
 }
 
 struct WeakCell {
-    value: Box<dyn Traceable>,
+    _value: Box<dyn Traceable>,
     ptr: TaggedPtr,
+}
+
+#[repr(C)]
+struct HeapTraceable {
+    ptr: *mut dyn Traceable,
+}
+
+impl HeapTraceable {
+    fn new(pinned: &mut dyn Traceable) -> HeapTraceable {
+        HeapTraceable {
+            ptr: pinned as *mut dyn Traceable,
+        }
+    }
+
+    fn store(&self, object_ptr: ObjectPtr) {
+        unsafe {
+            *(object_ptr.addr() as *mut *mut dyn Traceable) = self.ptr;
+        }
+    }
+
+    fn load(object_ptr: ObjectPtr) -> HeapTraceable {
+        let traceable_ptr = unsafe { *(object_ptr.addr() as *mut *mut dyn Traceable) };
+        HeapTraceable { ptr: traceable_ptr }
+    }
+
+    fn as_traceable(&self) -> &mut dyn Traceable {
+        unsafe { &mut (*self.ptr) }
+    }
+
+    fn downcast<T: 'static>(object_ptr: ObjectPtr) -> *const T {
+        let traceable_ptr = unsafe { *(object_ptr.addr() as *const *const dyn Traceable) };
+        let traceable_ref = unsafe { &(*traceable_ptr) };
+        traceable_ref.as_any().downcast_ref().unwrap() as *const T
+    }
+
+    fn downcast_mut<T: 'static>(object_ptr: ObjectPtr) -> *mut T {
+        Self::downcast::<T>(object_ptr) as *mut T
+    }
 }
 
 #[derive(Default)]
@@ -177,10 +216,9 @@ impl Heap {
         }
 
         while let Some(object_ptr) = visitor.queue.pop_front() {
-            let value_index = unsafe { *(object_ptr.addr() as *const usize) };
-            let mut inner = self.inner.borrow_mut();
-            let cell = inner.object_cells[value_index].as_mut().unwrap();
-            cell.value.trace(&mut visitor);
+            let object = HeapTraceable::load(object_ptr);
+            let traceable = object.as_traceable();
+            traceable.trace(&mut visitor);
         }
 
         let mut indicies_to_finalize = vec![];
@@ -214,23 +252,16 @@ impl Heap {
         self.take_object(Box::new(T::default()))
     }
 
-    fn take_object<T: HostObject>(&mut self, object: Box<T>) -> Result<ObjectPtr, GCError> {
-        let object_size = std::mem::size_of::<usize>();
+    fn take_object<T: HostObject>(&mut self, mut object: Box<T>) -> Result<ObjectPtr, GCError> {
+        let object_size = std::mem::size_of::<HeapTraceable>();
         let header = ObjectHeader::new(&mut self.space, object_size, T::TYPE_ID)?;
         let object_ptr = header.as_ptr().to_object_ptr();
-        let value_index = {
-            let mut inner = self.inner.borrow_mut();
-            let value_index = inner.object_cells.len();
-            inner.object_cells.push(Some(WeakCell {
-                value: object,
-                ptr: object_ptr.into(),
-            }));
-            value_index
-        };
-        unsafe {
-            // TODO: Make this more type safe. See similar code in collect().
-            *(object_ptr.addr() as *mut usize) = value_index;
-        }
+        let mut inner = self.inner.borrow_mut();
+        HeapTraceable::new(object.as_mut()).store(object_ptr);
+        inner.object_cells.push(Some(WeakCell {
+            _value: object,
+            ptr: object_ptr.into(),
+        }));
         Ok(object_ptr)
     }
 
@@ -391,13 +422,7 @@ impl<'a> LocalHandle<'a> {
                 return None;
             }
 
-            // TODO: This should be made more type safe. See similar code in collect().
-            let value_index = unsafe { *(object_ptr.addr() as *const usize) };
-
-            let inner = self.scope.inner.borrow();
-            let cell = inner.object_cells[value_index].as_ref().unwrap();
-            let value = cell.value.as_ref();
-            let ptr = value.as_any().downcast_ref().unwrap() as *const T;
+            let ptr = HeapTraceable::downcast::<T>(object_ptr);
             Some(unsafe { &*ptr })
         } else {
             None
@@ -413,13 +438,7 @@ impl<'a> LocalHandle<'a> {
                 return None;
             }
 
-            // TODO: This should be made more type safe. See similar code in collect().
-            let value_index = unsafe { *(object_ptr.addr() as *const usize) };
-
-            let inner = self.scope.inner.borrow();
-            let cell = inner.object_cells[value_index].as_ref().unwrap();
-            let value = cell.value.as_ref();
-            let ptr = value.as_any().downcast_ref().unwrap() as *const T as *mut T;
+            let ptr = HeapTraceable::downcast_mut::<T>(object_ptr);
             Some(unsafe { &mut *ptr })
         } else {
             None
@@ -460,11 +479,16 @@ impl<'a> From<LocalHandle<'a>> for HeapHandle {
 
 pub trait AsAny: Any {
     fn as_any(&self) -> &dyn Any;
+    fn type_name(&self) -> &'static str;
 }
 
 impl<T: Any> AsAny for T {
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    fn type_name(&self) -> &'static str {
+        std::any::type_name::<T>()
     }
 }
 pub trait Traceable: AsAny {
