@@ -324,8 +324,12 @@ impl HandleScope {
         index
     }
 
-    pub fn get(&self, handle: &GlobalHandle) -> LocalHandle {
+    pub fn from_global(&self, handle: &GlobalHandle) -> LocalHandle {
         LocalHandle::new(self, handle.ptr())
+    }
+
+    pub fn from_heap(&self, handle: &HeapHandle) -> LocalHandle {
+        LocalHandle::new(self, handle.ptr)
     }
 
     fn get_ptr(&self, index: usize) -> TaggedPtr {

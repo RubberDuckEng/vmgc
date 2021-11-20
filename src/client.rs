@@ -157,7 +157,7 @@ mod tests {
         std::mem::drop(scope);
 
         let scope = HandleScope::new(&heap);
-        let three = scope.get(&three_global);
+        let three = scope.from_global(&three_global);
         let three_value: f64 = three.try_into().unwrap();
         assert_eq!(3.0, three_value);
     }
@@ -194,5 +194,42 @@ mod tests {
         heap.collect().ok();
         let string_value = string_handle.as_ref::<String>().unwrap();
         assert_eq!(string_value, "Foo");
+    }
+
+    #[test]
+    fn list_push_string_twice_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        let scope = HandleScope::new(&heap);
+        let list = heap.allocate::<List>(&scope).unwrap();
+        let string = heap.take(&scope, "Foo".to_string()).unwrap();
+        let list_value = list.as_mut::<List>().unwrap();
+        list_value.values.push(string.into());
+        list_value.values.push(string.into());
+        std::mem::drop(list_value);
+        heap.collect().ok();
+        let list_value = list.as_mut::<List>().unwrap();
+        assert_eq!(list_value.values.len(), 2);
+        assert_eq!(
+            scope
+                .from_heap(&list_value.values[0])
+                .as_ref::<String>()
+                .unwrap(),
+            "Foo"
+        );
+        assert_eq!(
+            scope
+                .from_heap(&list_value.values[1])
+                .as_ref::<String>()
+                .unwrap(),
+            "Foo"
+        );
+        string.as_mut::<String>().unwrap().push_str("Bar");
+        assert_eq!(
+            scope
+                .from_heap(&list_value.values[0])
+                .as_ref::<String>()
+                .unwrap(),
+            "FooBar"
+        );
     }
 }

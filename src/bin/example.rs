@@ -58,7 +58,7 @@ fn main() {
     // push two numbers on the stack
     {
         let scope = HandleScope::new(&vm.heap);
-        let stack_handle = scope.get(&vm.stack);
+        let stack_handle = scope.from_global(&vm.stack);
         let stack = stack_handle.as_mut::<Stack>().unwrap();
 
         stack.values.push(HeapHandle::new(1.0.into()));
@@ -69,7 +69,7 @@ fn main() {
     // call the add function
     {
         let scope = HandleScope::new(&vm.heap);
-        let stack_handle = scope.get(&vm.stack);
+        let stack_handle = scope.from_global(&vm.stack);
         let stack = stack_handle.as_mut::<Stack>().unwrap();
 
         num_add(&mut vm, &stack.values[..], &mut stack.pending_result).ok();
@@ -82,7 +82,7 @@ fn main() {
     // expect a single number on the stack.
     {
         let scope = HandleScope::new(&vm.heap);
-        let stack_handle = scope.get(&vm.stack);
+        let stack_handle = scope.from_global(&vm.stack);
         let stack = stack_handle.as_mut::<Stack>().unwrap();
 
         let result: f64 = stack.values[0].ptr.try_into().unwrap();
@@ -93,7 +93,7 @@ fn main() {
     // call is_nan function
     {
         let scope = HandleScope::new(&vm.heap);
-        let stack_handle = scope.get(&vm.stack);
+        let stack_handle = scope.from_global(&vm.stack);
         let stack = stack_handle.as_mut::<Stack>().unwrap();
 
         num_is_nan(&mut vm, &stack.values[..], &mut stack.pending_result).ok();
@@ -105,7 +105,7 @@ fn main() {
     // expect a single bool (false) on the stack.
     {
         let scope = HandleScope::new(&vm.heap);
-        let stack_handle = scope.get(&vm.stack);
+        let stack_handle = scope.from_global(&vm.stack);
         let stack = stack_handle.as_mut::<Stack>().unwrap();
 
         let result: bool = stack.values[0].ptr.try_into().unwrap();
