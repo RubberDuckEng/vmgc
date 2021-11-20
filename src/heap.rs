@@ -240,15 +240,6 @@ impl Heap {
         Ok(LocalHandle::new(scope, object_ptr.into()))
     }
 
-    // FIXME: Move to HandleScope.
-    pub fn allocate_num<'a>(&mut self, scope: &'a HandleScope, value: f64) -> LocalHandle<'a> {
-        LocalHandle::new(scope, value.into())
-    }
-
-    pub fn allocate_null<'a>(&mut self, scope: &'a HandleScope) -> LocalHandle<'a> {
-        LocalHandle::new(scope, TaggedPtr::NULL)
-    }
-
     pub fn allocate_heap<T: HostObject>(&mut self) -> Result<HeapHandle, GCError> {
         Ok(HeapHandle::new(self.allocate_object::<T>()?.into()))
     }
@@ -294,6 +285,14 @@ impl HandleScope {
             inner: Arc::clone(&heap.inner),
             index,
         }
+    }
+
+    pub fn create_num(&self, value: f64) -> LocalHandle {
+        LocalHandle::new(self, value.into())
+    }
+
+    pub fn create_null(&self) -> LocalHandle {
+        LocalHandle::new(self, TaggedPtr::NULL)
     }
 
     fn add(&self, ptr: TaggedPtr) -> usize {
