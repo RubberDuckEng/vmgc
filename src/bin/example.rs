@@ -120,6 +120,10 @@ fn main() {
 // match on Value types
 //  -- Is value just TaggedNum/TaggedPtr?
 //  -- Is this a match on value.type()?
+// Passing a Value into a function
+// -- either &HeapHandle (ref to somewhere held tracable)
+// -- or LocalHandle (temporarily tracable by its HandleScope)
+// -- If not worried about perf, chose LocalHandle.
 // etc.
 // Maps to in wren.
 // Or does Value just no longer exist and we use Handles instead?

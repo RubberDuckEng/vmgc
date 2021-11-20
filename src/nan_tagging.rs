@@ -30,13 +30,13 @@ const TAG_TRUE: usize = 3;
 // const TAG_UNUSED4: usize = 7;
 
 impl TaggedNum {
-    const NULL: TaggedNum = TaggedNum {
+    pub const NULL: TaggedNum = TaggedNum {
         bits: QUIET_NAN_MASK | TAG_NULL,
     };
-    const FALSE: TaggedNum = TaggedNum {
+    pub const FALSE: TaggedNum = TaggedNum {
         bits: QUIET_NAN_MASK | TAG_FALSE,
     };
-    const TRUE: TaggedNum = TaggedNum {
+    pub const TRUE: TaggedNum = TaggedNum {
         bits: QUIET_NAN_MASK | TAG_TRUE,
     };
 

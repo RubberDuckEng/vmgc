@@ -12,3 +12,12 @@ Inspired in part by https://rust-hosted-langs.github.io/book/introduction.html
 * Thread safety
 * Smarter size specification for Heap size (max size?)
 * Provide allocator for Heap?
+* Some sort of typed Handle?
+* Consider making a HandleScope like AutoReleasePool?
+
+# Blocking for wren integration
+* A map type which takes handles.
+* Examples of allocating every type including Null, Num, String, List, Map
+* Example of passing LocalHandle
+* Example of returning some type of handle?
+

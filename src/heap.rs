@@ -65,12 +65,7 @@ impl Drop for Space {
     }
 }
 
-#[derive(Debug)]
-struct HeapCell {
-    ptr: TaggedPtr,
-}
-
-impl HeapCell {
+impl HeapHandle {
     fn visit(&mut self, visitor: &mut ObjectVisitor) {
         let maybe_object_ptr: Option<ObjectPtr> = self.ptr.try_into().ok();
         if let Some(object_ptr) = maybe_object_ptr {
@@ -86,8 +81,8 @@ struct WeakCell {
 
 #[derive(Default)]
 struct HeapInner {
-    globals: Vec<Option<HeapCell>>,
-    scopes: Vec<Vec<HeapCell>>,
+    globals: Vec<Option<HeapHandle>>,
+    scopes: Vec<Vec<HeapHandle>>,
     object_cells: Vec<Option<WeakCell>>,
     // TODO: Add Vec of weak pointers.
 }
@@ -136,14 +131,14 @@ impl ObjectVisitor {
         }
     }
 
-    fn visit_cells(&mut self, cells: &mut Vec<HeapCell>) {
+    fn visit_cells(&mut self, cells: &mut Vec<HeapHandle>) {
         for index in 0..cells.len() {
             let cell = &mut cells[index];
             cell.visit(self);
         }
     }
 
-    fn visit_maybe_cells(&mut self, cells: &mut Vec<Option<HeapCell>>) {
+    fn visit_maybe_cells(&mut self, cells: &mut Vec<Option<HeapHandle>>) {
         for index in 0..cells.len() {
             if let Some(cell) = &mut cells[index] {
                 cell.visit(self);
@@ -252,6 +247,10 @@ impl Heap {
         LocalHandle::new(scope, value.into())
     }
 
+    pub fn allocate_null<'a>(&mut self, scope: &'a HandleScope) -> LocalHandle<'a> {
+        LocalHandle::new(scope, TaggedNum::NULL)
+    }
+
     pub fn allocate_heap<T: HostObject>(&mut self) -> Result<HeapHandle, GCError> {
         Ok(HeapHandle::new(self.allocate_object::<T>()?.into()))
     }
@@ -303,7 +302,7 @@ impl HandleScope {
         let mut inner = self.inner.borrow_mut();
         let cells = &mut inner.scopes[self.index];
         let index = cells.len();
-        cells.push(HeapCell { ptr });
+        cells.push(HeapHandle { ptr });
         index
     }
 
@@ -348,7 +347,7 @@ impl<'a> LocalHandle<'a> {
             // TODO: Scan for available cells.
             let mut inner = self.scope.inner.borrow_mut();
             let index = inner.globals.len();
-            inner.globals.push(Some(HeapCell { ptr }));
+            inner.globals.push(Some(HeapHandle { ptr }));
             index
         };
         GlobalHandle {
