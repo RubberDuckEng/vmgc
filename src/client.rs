@@ -232,4 +232,21 @@ mod tests {
             "FooBar"
         );
     }
+
+    // #[test]
+    // fn map_insert_test() {
+    //     let mut heap = Heap::new(1000).unwrap();
+    //     let scope = HandleScope::new(&heap);
+    //     let map = heap.allocate::<List>(&scope).unwrap();
+    //     let foo = heap.take(&scope, "Foo".into());
+    //     let bar = heap.take(&scope, "Bar".into());
+    //     let mut map_value = map.as_mut::<Map>().unwrap();
+    //     map_value.insert(foo.into(), bar.into());
+    //     std::mem::drop(map_value);
+    //     std::mem::drop(foo);
+    //     std::mem::drop(bar);
+    //     heap.collect().ok();
+    //     let map_value = map.as_mut::<Map>().unwrap();
+    //     // TODO: Test that the map still works.
+    // }
 }

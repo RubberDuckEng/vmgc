@@ -1,7 +1,7 @@
 use std::alloc::{alloc, dealloc, Layout};
 use std::any::Any;
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::convert::TryInto;
 // use std::ptr::NonNull;
 use std::sync::Arc;
@@ -482,5 +482,15 @@ impl HostObject for String {
 }
 
 impl Traceable for String {
+    fn trace(&mut self, _visitor: &mut ObjectVisitor) {}
+}
+
+pub type Map = HashMap<HeapHandle, HeapHandle>;
+
+impl HostObject for Map {
+    const TYPE_ID: ObjectType = ObjectType::Host;
+}
+
+impl Traceable for Map {
     fn trace(&mut self, _visitor: &mut ObjectVisitor) {}
 }
