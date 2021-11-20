@@ -211,6 +211,10 @@ impl Heap {
     }
 
     fn allocate_object<T: HostObject>(&mut self) -> Result<ObjectPtr, GCError> {
+        self.take_object(Box::new(T::default()))
+    }
+
+    fn take_object<T: HostObject>(&mut self, object: Box<T>) -> Result<ObjectPtr, GCError> {
         let object_size = std::mem::size_of::<usize>();
         let header = ObjectHeader::new(&mut self.space, object_size, T::TYPE_ID)?;
         let object_ptr = header.as_ptr().to_object_ptr();
@@ -218,7 +222,7 @@ impl Heap {
             let mut inner = self.inner.borrow_mut();
             let value_index = inner.object_cells.len();
             inner.object_cells.push(Some(WeakCell {
-                value: Box::new(T::default()),
+                value: object,
                 ptr: object_ptr.into(),
             }));
             value_index
@@ -237,6 +241,23 @@ impl Heap {
         scope: &'a HandleScope,
     ) -> Result<LocalHandle<'a>, GCError> {
         let object_ptr = self.allocate_object::<T>()?;
+        Ok(LocalHandle::new(scope, object_ptr.into()))
+    }
+
+    pub fn take<'a, T: HostObject>(
+        &mut self,
+        scope: &'a HandleScope,
+        object: T,
+    ) -> Result<LocalHandle<'a>, GCError> {
+        self.take_box(scope, Box::new(object))
+    }
+
+    pub fn take_box<'a, T: HostObject>(
+        &mut self,
+        scope: &'a HandleScope,
+        object: Box<T>,
+    ) -> Result<LocalHandle<'a>, GCError> {
+        let object_ptr = self.take_object(object)?;
         Ok(LocalHandle::new(scope, object_ptr.into()))
     }
 
