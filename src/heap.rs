@@ -472,3 +472,11 @@ pub trait Traceable: AsAny {
 pub trait HostObject: Traceable + Default {
     const TYPE_ID: ObjectType;
 }
+
+impl HostObject for String {
+    const TYPE_ID: ObjectType = ObjectType::Host;
+}
+
+impl Traceable for String {
+    fn trace(&mut self, _visitor: &mut ObjectVisitor) {}
+}

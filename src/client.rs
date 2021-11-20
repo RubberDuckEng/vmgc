@@ -19,33 +19,6 @@ use crate::object::ObjectType;
 //     heap.allocate_local::<Number>(result)
 // }
 
-#[derive(Debug, Default)]
-pub struct HeapString {
-    value: String,
-}
-
-impl HostObject for HeapString {
-    const TYPE_ID: ObjectType = ObjectType::Host;
-}
-
-impl Traceable for HeapString {
-    fn trace(&mut self, _visitor: &mut ObjectVisitor) {}
-}
-
-impl From<String> for HeapString {
-    fn from(value: String) -> HeapString {
-        HeapString { value }
-    }
-}
-
-impl From<&str> for HeapString {
-    fn from(value: &str) -> HeapString {
-        HeapString {
-            value: value.into(),
-        }
-    }
-}
-
 #[derive(Default)]
 pub struct List {
     values: Vec<HeapHandle>,
@@ -207,19 +180,19 @@ mod tests {
     fn string_test() {
         let mut heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
-        let string_handle = heap.allocate::<HeapString>(&scope).unwrap();
+        let string_handle = heap.allocate::<String>(&scope).unwrap();
         heap.collect().ok();
-        let string_value = string_handle.as_mut::<HeapString>().unwrap();
-        assert_eq!(string_value.value, "");
+        let string_value = string_handle.as_ref::<String>().unwrap();
+        assert_eq!(string_value, "");
     }
 
     #[test]
     fn take_string_test() {
         let mut heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
-        let string_handle = heap.take(&scope, HeapString::from("Foo")).unwrap();
+        let string_handle = heap.take(&scope, "Foo".to_string()).unwrap();
         heap.collect().ok();
-        let string_value = string_handle.as_mut::<HeapString>().unwrap();
-        assert_eq!(string_value.value, "Foo");
+        let string_value = string_handle.as_ref::<String>().unwrap();
+        assert_eq!(string_value, "Foo");
     }
 }
