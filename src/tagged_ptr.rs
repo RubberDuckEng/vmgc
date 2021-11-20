@@ -5,7 +5,7 @@ use crate::types::*;
 
 #[derive(Copy, Clone)]
 #[repr(C)]
-pub union TaggedNum {
+pub union TaggedPtr {
     number: f64,
     bits: usize,
 }
@@ -29,14 +29,14 @@ const TAG_TRUE: usize = 3;
 // const TAG_UNUSED3: usize = 6;
 // const TAG_UNUSED4: usize = 7;
 
-impl TaggedNum {
-    pub const NULL: TaggedNum = TaggedNum {
+impl TaggedPtr {
+    pub const NULL: TaggedPtr = TaggedPtr {
         bits: QUIET_NAN_MASK | TAG_NULL,
     };
-    pub const FALSE: TaggedNum = TaggedNum {
+    pub const FALSE: TaggedPtr = TaggedPtr {
         bits: QUIET_NAN_MASK | TAG_FALSE,
     };
-    pub const TRUE: TaggedNum = TaggedNum {
+    pub const TRUE: TaggedPtr = TaggedPtr {
         bits: QUIET_NAN_MASK | TAG_TRUE,
     };
 
@@ -51,16 +51,16 @@ impl TaggedNum {
     }
 
     fn is_true_singleton(&self) -> bool {
-        unsafe { self.bits == TaggedNum::TRUE.bits }
+        unsafe { self.bits == TaggedPtr::TRUE.bits }
     }
 
     fn is_false_singleton(&self) -> bool {
-        unsafe { self.bits == TaggedNum::FALSE.bits }
+        unsafe { self.bits == TaggedPtr::FALSE.bits }
     }
 
     #[cfg(test)]
     fn is_null(&self) -> bool {
-        unsafe { self.bits == TaggedNum::NULL.bits }
+        unsafe { self.bits == TaggedPtr::NULL.bits }
     }
 
     // fn singleton_tag(&self) -> usize {
@@ -72,19 +72,19 @@ impl TaggedNum {
     }
 }
 
-impl Default for TaggedNum {
+impl Default for TaggedPtr {
     fn default() -> Self {
-        TaggedNum::NULL
+        TaggedPtr::NULL
     }
 }
 
-impl From<f64> for TaggedNum {
-    fn from(value: f64) -> TaggedNum {
-        TaggedNum { number: value }
+impl From<f64> for TaggedPtr {
+    fn from(value: f64) -> TaggedPtr {
+        TaggedPtr { number: value }
     }
 }
 
-impl TryInto<f64> for TaggedNum {
+impl TryInto<f64> for TaggedPtr {
     type Error = GCError;
     fn try_into(self) -> Result<f64, GCError> {
         unsafe {
@@ -97,12 +97,12 @@ impl TryInto<f64> for TaggedNum {
     }
 }
 
-impl From<bool> for TaggedNum {
-    fn from(value: bool) -> TaggedNum {
+impl From<bool> for TaggedPtr {
+    fn from(value: bool) -> TaggedPtr {
         if value {
-            TaggedNum::TRUE
+            TaggedPtr::TRUE
         } else {
-            TaggedNum::FALSE
+            TaggedPtr::FALSE
         }
     }
 }
@@ -110,9 +110,9 @@ impl From<bool> for TaggedNum {
 // This is only TryFrom instead of From, because the caller needs to determine
 // what is "truthy" or "falsey" this only converts to bools when was was stored
 // was true or false.
-impl TryFrom<TaggedNum> for bool {
+impl TryFrom<TaggedPtr> for bool {
     type Error = GCError;
-    fn try_from(tagged: TaggedNum) -> Result<bool, GCError> {
+    fn try_from(tagged: TaggedPtr) -> Result<bool, GCError> {
         if tagged.is_true_singleton() {
             Ok(true)
         } else if tagged.is_false_singleton() {
@@ -123,19 +123,19 @@ impl TryFrom<TaggedNum> for bool {
     }
 }
 
-impl From<ObjectPtr> for TaggedNum {
-    fn from(ptr: ObjectPtr) -> TaggedNum {
+impl From<ObjectPtr> for TaggedPtr {
+    fn from(ptr: ObjectPtr) -> TaggedPtr {
         unsafe {
-            TaggedNum {
+            TaggedPtr {
                 bits: std::mem::transmute::<ObjectPtr, usize>(ptr) | PTR_TAG_MASK,
             }
         }
     }
 }
 
-impl TryFrom<TaggedNum> for ObjectPtr {
+impl TryFrom<TaggedPtr> for ObjectPtr {
     type Error = GCError;
-    fn try_from(tagged: TaggedNum) -> Result<ObjectPtr, GCError> {
+    fn try_from(tagged: TaggedPtr) -> Result<ObjectPtr, GCError> {
         unsafe {
             if tagged.is_ptr() {
                 Ok(std::mem::transmute::<usize, ObjectPtr>(
@@ -148,7 +148,7 @@ impl TryFrom<TaggedNum> for ObjectPtr {
     }
 }
 
-impl std::fmt::Debug for TaggedNum {
+impl std::fmt::Debug for TaggedPtr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TaggedNum").finish()
     }
@@ -162,13 +162,13 @@ mod tests {
     pub fn size_test() {
         // This should be compile time instead:
         // https://github.com/rust-lang/rfcs/issues/2790
-        assert_eq!(std::mem::size_of::<TaggedNum>(), 8);
+        assert_eq!(std::mem::size_of::<TaggedPtr>(), 8);
     }
 
     #[test]
     pub fn null_test() {
-        assert!(TaggedNum::default().is_null());
-        let zero: TaggedNum = 0.0.into();
+        assert!(TaggedPtr::default().is_null());
+        let zero: TaggedPtr = 0.0.into();
         assert!(!zero.is_null());
     }
 
@@ -176,14 +176,14 @@ mod tests {
     pub fn truthiness_test() {
         // This layer intentionally only gives an answer for True and False
         // and leaves what else is "truthy" or "falsey" to the caller.
-        assert_eq!(bool::try_from(TaggedNum::FALSE).unwrap(), false);
-        assert_eq!(bool::try_from(TaggedNum::TRUE).unwrap(), true);
-        assert_eq!(bool::try_from(TaggedNum::NULL).ok(), None);
+        assert_eq!(bool::try_from(TaggedPtr::FALSE).unwrap(), false);
+        assert_eq!(bool::try_from(TaggedPtr::TRUE).unwrap(), true);
+        assert_eq!(bool::try_from(TaggedPtr::NULL).ok(), None);
 
         // Try round-tripping a pointer as well.
         let boxed = Box::new(1);
         let ptr = ObjectPtr::new(Box::into_raw(boxed));
-        let tagged = TaggedNum::from(ptr);
+        let tagged = TaggedPtr::from(ptr);
         assert_eq!(bool::try_from(tagged).ok(), None);
         let ptr: ObjectPtr = tagged.try_into().unwrap();
         let boxed = unsafe { Box::from_raw(ptr.addr()) };

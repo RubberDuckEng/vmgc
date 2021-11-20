@@ -6,11 +6,9 @@ use std::convert::TryInto;
 // use std::ptr::NonNull;
 use std::sync::Arc;
 
-use crate::nan_tagging::TaggedNum;
 use crate::object::*;
+use crate::tagged_ptr::TaggedPtr;
 use crate::types::*;
-
-type TaggedPtr = TaggedNum;
 
 #[derive(Debug)]
 pub struct Space {
@@ -248,7 +246,7 @@ impl Heap {
     }
 
     pub fn allocate_null<'a>(&mut self, scope: &'a HandleScope) -> LocalHandle<'a> {
-        LocalHandle::new(scope, TaggedNum::NULL)
+        LocalHandle::new(scope, TaggedPtr::NULL)
     }
 
     pub fn allocate_heap<T: HostObject>(&mut self) -> Result<HeapHandle, GCError> {
