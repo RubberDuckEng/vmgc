@@ -14,10 +14,12 @@ Inspired in part by https://rust-hosted-langs.github.io/book/introduction.html
 * Provide allocator for Heap?
 * Some sort of typed Handle?
 * Consider making a HandleScope like AutoReleasePool?
+* Consider having a NonNullHandle type?
 
 # Blocking for wren integration
 * A map type which takes handles.
 * Examples of allocating every type including Null, Num, String, List, Map
 * Example of passing LocalHandle
 * Example of returning some type of handle?
+* Example of copying a handle.
 

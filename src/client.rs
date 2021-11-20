@@ -1,12 +1,6 @@
 use crate::heap::*;
 use crate::object::ObjectType;
 
-// 1. Create some sort of "Value" type?
-// 2. Create tagged pointer
-// Union
-// Type_id
-//
-
 // #[repr(u16)]
 // #[derive(Debug, Copy, Clone, PartialEq)]
 // pub enum TypeId {
