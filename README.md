@@ -19,8 +19,5 @@ Inspired in part by https://rust-hosted-langs.github.io/book/introduction.html
 * Collect on allocation
 
 # Blocking for wren integration
-* Examples of allocating every type including Null, Num, String, List, Map
 * Example of passing LocalHandle
 * Example of returning some type of handle?
-* Example of copying a handle.
-
