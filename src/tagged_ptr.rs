@@ -1,7 +1,9 @@
 use std::convert::{From, TryFrom, TryInto};
+use std::hash::{Hash, Hasher};
 
+use crate::heap::HeapTraceable;
 use crate::object::{ObjectHeader, ObjectPtr};
-use crate::types::*;
+use crate::types::*; // FIXME: Remove.
 
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -151,6 +153,36 @@ impl TryFrom<TaggedPtr> for ObjectPtr {
 impl std::fmt::Debug for TaggedPtr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("TaggedNum").finish()
+    }
+}
+
+impl PartialEq for TaggedPtr {
+    fn eq(&self, rhs: &TaggedPtr) -> bool {
+        if self.is_ptr() != rhs.is_ptr() {
+            return false;
+        }
+        if self.is_ptr() {
+            let lhs_ptr = self.clone().try_into().unwrap();
+            let rhs_ptr = rhs.clone().try_into().unwrap();
+            let lhs_object = HeapTraceable::load(lhs_ptr);
+            lhs_object.as_traceable().object_eq(lhs_ptr, rhs_ptr)
+        } else {
+            unsafe { self.bits == rhs.bits }
+        }
+    }
+}
+
+impl Eq for TaggedPtr {}
+
+impl Hash for TaggedPtr {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        if self.is_ptr() {
+            let ptr = self.clone().try_into().unwrap();
+            let object = HeapTraceable::load(ptr);
+            object.as_traceable().object_hash(ptr).hash(state);
+        } else {
+            unsafe { self.bits.hash(state) }
+        }
     }
 }
 

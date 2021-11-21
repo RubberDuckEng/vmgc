@@ -19,7 +19,7 @@ use crate::object::ObjectType;
 //     heap.allocate_local::<Number>(result)
 // }
 
-#[derive(Default)]
+#[derive(Default, Hash)]
 pub struct List {
     values: Vec<HeapHandle>,
 }
@@ -42,6 +42,7 @@ mod tests {
 
     use std::cell::Cell;
     use std::convert::TryInto;
+    use std::hash::{Hash, Hasher};
     use std::rc::Rc;
 
     #[derive(Default)]
@@ -61,6 +62,12 @@ mod tests {
         fn drop(&mut self) {
             let counter = self.counter.get();
             self.counter.set(counter + 1);
+        }
+    }
+
+    impl Hash for DropObject {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            (self as *const DropObject as usize).hash(state);
         }
     }
 
@@ -233,20 +240,20 @@ mod tests {
         );
     }
 
-    // #[test]
-    // fn map_insert_test() {
-    //     let mut heap = Heap::new(1000).unwrap();
-    //     let scope = HandleScope::new(&heap);
-    //     let map = heap.allocate::<List>(&scope).unwrap();
-    //     let foo = heap.take(&scope, "Foo".into());
-    //     let bar = heap.take(&scope, "Bar".into());
-    //     let mut map_value = map.as_mut::<Map>().unwrap();
-    //     map_value.insert(foo.into(), bar.into());
-    //     std::mem::drop(map_value);
-    //     std::mem::drop(foo);
-    //     std::mem::drop(bar);
-    //     heap.collect().ok();
-    //     let map_value = map.as_mut::<Map>().unwrap();
-    //     // TODO: Test that the map still works.
-    // }
+    #[test]
+    fn map_insert_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        let scope = HandleScope::new(&heap);
+        let map = heap.allocate::<List>(&scope).unwrap();
+        let foo = heap.take(&scope, "Foo".to_string()).unwrap();
+        let bar = heap.take(&scope, "Bar".to_string()).unwrap();
+        let map_value = map.as_mut::<Map>().unwrap();
+        map_value.insert(foo.into(), bar.into());
+        std::mem::drop(map_value);
+        std::mem::drop(foo);
+        std::mem::drop(bar);
+        heap.collect().ok();
+        // let map_value = map.as_mut::<Map>().unwrap();
+        // TODO: Test that the map still works.
+    }
 }

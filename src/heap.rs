@@ -3,6 +3,7 @@ use std::any::Any;
 use std::cell::RefCell;
 use std::collections::{HashMap, VecDeque};
 use std::convert::TryInto;
+use std::hash::Hash;
 // use std::ptr::NonNull;
 use std::convert::AsMut;
 use std::sync::Arc;
@@ -79,7 +80,7 @@ struct WeakCell {
 }
 
 #[repr(C)]
-struct HeapTraceable {
+pub struct HeapTraceable {
     ptr: *mut dyn Traceable,
 }
 
@@ -96,12 +97,12 @@ impl HeapTraceable {
         }
     }
 
-    fn load(object_ptr: ObjectPtr) -> HeapTraceable {
+    pub fn load(object_ptr: ObjectPtr) -> HeapTraceable {
         let traceable_ptr = unsafe { *(object_ptr.addr() as *mut *mut dyn Traceable) };
         HeapTraceable { ptr: traceable_ptr }
     }
 
-    fn as_traceable(&self) -> &mut dyn Traceable {
+    pub fn as_traceable(&self) -> &mut dyn Traceable {
         unsafe { &mut (*self.ptr) }
     }
 
@@ -453,7 +454,7 @@ impl<'a> TryInto<f64> for LocalHandle<'a> {
     }
 }
 
-#[derive(Default)]
+#[derive(Default, PartialEq, Eq, Hash)]
 #[repr(transparent)]
 pub struct HeapHandle {
     pub ptr: TaggedPtr,
@@ -493,6 +494,26 @@ impl<T: Any> AsAny for T {
 }
 pub trait Traceable: AsAny {
     fn trace(&mut self, _visitor: &mut ObjectVisitor);
+
+    // Using Hash<T> includes a type parameter, which makes Tracable no longer
+    // dyn compatible and the rust compiler barfs. :/
+    // fn object_hash(&self) -> u64 {
+    //     let mut hasher = DefaultHasher::new();
+    //     std::ptr::hash(self as *const dyn Traceable, &mut hasher);
+    //     hasher.finish()
+    // }
+
+    // fn object_eq(&self, rhs: &dyn Traceable) -> bool {
+    //     std::ptr::eq(self as *const dyn Traceable, rhs as *const dyn Traceable)
+    // }
+
+    fn object_hash(&self, ptr: ObjectPtr) -> usize {
+        ptr.addr() as usize
+    }
+
+    fn object_eq(&self, lhs: ObjectPtr, rhs: ObjectPtr) -> bool {
+        lhs.addr().eq(&rhs.addr())
+    }
 }
 
 // We will eventually add a HeapObject as an optimization
@@ -516,5 +537,13 @@ impl HostObject for Map {
 }
 
 impl Traceable for Map {
-    fn trace(&mut self, _visitor: &mut ObjectVisitor) {}
+    #[allow(mutable_transmutes)] // !!!
+    fn trace(&mut self, visitor: &mut ObjectVisitor) {
+        for (key, value) in self.iter_mut() {
+            // TODO: We're not supposed to do this! What should we do instead?
+            let key = unsafe { std::mem::transmute(key) };
+            visitor.visit(key);
+            visitor.visit(value);
+        }
+    }
 }
