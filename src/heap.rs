@@ -534,8 +534,8 @@ pub trait Traceable: AsAny {
     //     std::ptr::eq(self as *const dyn Traceable, rhs as *const dyn Traceable)
     // }
 
-    fn object_hash(&self, ptr: ObjectPtr) -> usize {
-        ptr.addr() as usize
+    fn object_hash(&self, ptr: ObjectPtr) -> u64 {
+        ptr.addr() as u64
     }
 
     fn object_eq(&self, lhs: ObjectPtr, rhs: ObjectPtr) -> bool {
@@ -555,6 +555,19 @@ impl HostObject for String {
 
 impl Traceable for String {
     fn trace(&mut self, _visitor: &mut ObjectVisitor) {}
+
+    fn object_hash(&self, _ptr: ObjectPtr) -> u64 {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        self.hash(&mut hasher);
+        hasher.finish()
+    }
+
+    fn object_eq(&self, _lhs: ObjectPtr, rhs_object_ptr: ObjectPtr) -> bool {
+        // FIXME: This depends on the caller having passed the correct ObjectPtr
+        let rhs_ptr = HeapTraceable::downcast::<String>(rhs_object_ptr);
+        let rhs = unsafe { &*rhs_ptr };
+        self.eq(rhs)
+    }
 }
 
 pub type Map = HashMap<HeapHandle, HeapHandle>;
