@@ -23,10 +23,8 @@ impl HostObject for Stack {
 
 impl Traceable for Stack {
     fn trace(&mut self, visitor: &mut ObjectVisitor) {
-        for value in self.values.iter_mut() {
-            visitor.visit(value);
-        }
-        visitor.visit(&mut self.pending_result);
+        visitor.trace_handles(&self.values);
+        self.pending_result.trace(visitor);
     }
 }
 

@@ -144,7 +144,7 @@ impl TryFrom<TaggedPtr> for ObjectPtr {
 
 impl std::fmt::Debug for TaggedPtr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("TaggedNum").finish()
+        f.debug_struct("TaggedPtr").finish()
     }
 }
 

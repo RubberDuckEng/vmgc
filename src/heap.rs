@@ -65,16 +65,6 @@ impl Drop for Space {
     }
 }
 
-impl HeapHandle {
-    fn visit(&mut self, visitor: &mut ObjectVisitor) {
-        let maybe_object_ptr: Option<ObjectPtr> = self.ptr().try_into().ok();
-        if let Some(object_ptr) = maybe_object_ptr {
-            self._ptr
-                .set(visitor.visit_header(object_ptr.header()).into());
-        }
-    }
-}
-
 struct WeakCell {
     _value: Box<dyn Traceable>,
     ptr: TaggedPtr,
@@ -145,7 +135,7 @@ impl ObjectVisitor {
         }
     }
 
-    fn visit_header(&mut self, header: &mut ObjectHeader) -> ObjectPtr {
+    fn visit(&mut self, header: &mut ObjectHeader) -> ObjectPtr {
         if let Some(new_header_ptr) = header.new_header_ptr {
             return new_header_ptr.to_object_ptr();
         }
@@ -164,23 +154,17 @@ impl ObjectVisitor {
         object_ptr
     }
 
-    pub fn visit(&mut self, handle: &HeapHandle) {
-        if let Some(header) = handle.ptr().header() {
-            handle._ptr.set(self.visit_header(header).into());
+    pub fn trace_handles(&mut self, handles: &Vec<HeapHandle>) {
+        for index in 0..handles.len() {
+            let handle = &handles[index];
+            handle.trace(self);
         }
     }
 
-    fn visit_cells(&mut self, cells: &mut Vec<HeapHandle>) {
-        for index in 0..cells.len() {
-            let cell = &mut cells[index];
-            cell.visit(self);
-        }
-    }
-
-    fn visit_maybe_cells(&mut self, cells: &mut Vec<Option<HeapHandle>>) {
-        for index in 0..cells.len() {
-            if let Some(cell) = &mut cells[index] {
-                cell.visit(self);
+    fn trace_maybe_handles(&mut self, handles: &Vec<Option<HeapHandle>>) {
+        for index in 0..handles.len() {
+            if let Some(handle) = &handles[index] {
+                handle.trace(self);
             }
         }
     }
@@ -210,10 +194,10 @@ impl Heap {
         let mut visitor = ObjectVisitor::new(Space::new(self.space.size)?);
         {
             let mut inner = self.inner.borrow_mut();
-            visitor.visit_maybe_cells(&mut inner.globals);
+            visitor.trace_maybe_handles(&mut inner.globals);
             for scope in inner.scopes.iter_mut() {
                 // FIXME:  Scope should be an object, not a vec here.
-                visitor.visit_cells(scope);
+                visitor.trace_handles(scope);
             }
         }
 
@@ -460,7 +444,7 @@ impl<'a> TryInto<f64> for LocalHandle<'a> {
 pub struct HeapHandle {
     // Held in a Cell so that visit doesn't require mut self.
     // visit() is the ONLY place where ptr should ever change.
-    _ptr: Cell<TaggedPtr>,
+    ptr: Cell<TaggedPtr>,
 }
 
 impl Default for HeapHandle {
@@ -478,18 +462,24 @@ impl Hash for HeapHandle {
 impl HeapHandle {
     pub fn new(ptr: TaggedPtr) -> HeapHandle {
         HeapHandle {
-            _ptr: Cell::new(ptr),
+            ptr: Cell::new(ptr),
         }
     }
 
     pub fn ptr(&self) -> TaggedPtr {
-        self._ptr.get()
+        self.ptr.get()
+    }
+
+    pub fn trace(&self, visitor: &mut ObjectVisitor) {
+        if let Some(header) = self.ptr().header() {
+            self.ptr.set(visitor.visit(header).into());
+        }
     }
 
     // This intentionally takes &mut self and has normal mutation
     // rules, only visit() should use _ptr.set().
     pub fn set_ptr(&mut self, ptr: TaggedPtr) {
-        self._ptr.set(ptr);
+        self.ptr.set(ptr);
     }
 
     pub fn take(&mut self) -> HeapHandle {
@@ -577,11 +567,10 @@ impl HostObject for Map {
 }
 
 impl Traceable for Map {
-    #[allow(mutable_transmutes)] // !!!
     fn trace(&mut self, visitor: &mut ObjectVisitor) {
         for (key, value) in self.iter_mut() {
-            visitor.visit(key);
-            visitor.visit(value);
+            key.trace(visitor);
+            value.trace(visitor);
         }
     }
 }

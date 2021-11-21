@@ -8,6 +8,7 @@ Inspired in part by https://rust-hosted-langs.github.io/book/introduction.html
 # TODO
 * Add tests for various allocation failures.
 * Alignment for allocations
+* Shrink object header
 * Generational collection
 * Thread safety
 * Smarter size specification for Heap size (max size?)
