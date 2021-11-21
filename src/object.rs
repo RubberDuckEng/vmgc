@@ -61,7 +61,7 @@ pub struct ObjectHeader {
     pub new_header_ptr: Option<HeaderPtr>,
 }
 
-pub const HEADER_SIZE: usize = std::mem::size_of::<ObjectHeader>();
+const HEADER_SIZE: usize = std::mem::size_of::<ObjectHeader>();
 
 impl ObjectHeader {
     pub fn new<'a>(
@@ -70,18 +70,18 @@ impl ObjectHeader {
         object_type: ObjectType,
     ) -> Result<&'a mut ObjectHeader, GCError> {
         let header_ptr = HeaderPtr::new(space.alloc(HEADER_SIZE + object_size)?);
-        let header = ObjectHeader::from_header_ptr(header_ptr);
+        let header = ObjectHeader::from_ptr(header_ptr);
         header.object_size = object_size;
         header.object_type = object_type;
         Ok(header)
     }
 
-    pub fn from_header_ptr<'a>(header_ptr: HeaderPtr) -> &'a mut ObjectHeader {
+    pub fn from_ptr<'a>(header_ptr: HeaderPtr) -> &'a mut ObjectHeader {
         unsafe { &mut *(header_ptr.addr() as *mut ObjectHeader) }
     }
 
     pub fn from_object_ptr<'a>(object_ptr: ObjectPtr) -> &'a mut ObjectHeader {
-        Self::from_header_ptr(object_ptr.to_header_ptr())
+        Self::from_ptr(object_ptr.to_header_ptr())
     }
 
     pub fn alloc_size(&self) -> usize {

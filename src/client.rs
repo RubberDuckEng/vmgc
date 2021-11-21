@@ -30,9 +30,7 @@ impl HostObject for List {
 
 impl Traceable for List {
     fn trace(&mut self, visitor: &mut ObjectVisitor) {
-        for handle in self.values.iter_mut() {
-            visitor.visit(handle);
-        }
+        visitor.trace_handles(&self.values);
     }
 }
 
