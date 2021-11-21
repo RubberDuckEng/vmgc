@@ -133,7 +133,6 @@ impl Drop for GlobalHandle {
     }
 }
 
-// FIXME: Hold a ref to the heap.
 pub struct HandleScope<'a> {
     heap: &'a Heap,
     index: usize,
@@ -212,21 +211,6 @@ impl<'a> LocalHandle<'a> {
         self.scope.get_ptr(self.index)
     }
 
-    pub fn to_global(&self) -> GlobalHandle {
-        let ptr = self.ptr();
-        let index = {
-            // TODO: Scan for available cells.
-            let mut inner = self.scope.heap.inner.borrow_mut();
-            let index = inner.globals.len();
-            inner.globals.push(Some(HeapHandle::new(ptr)));
-            index
-        };
-        GlobalHandle {
-            inner: Arc::clone(&self.scope.heap.inner),
-            index,
-        }
-    }
-
     fn get_object_ptr(&self) -> Option<ObjectPtr> {
         self.ptr().try_into().ok()
     }
@@ -271,6 +255,23 @@ impl<'a> From<LocalHandle<'a>> for HeapHandle {
     }
 }
 
+impl<'a> From<LocalHandle<'a>> for GlobalHandle {
+    fn from(handle: LocalHandle<'a>) -> Self {
+        let ptr = handle.ptr();
+        let index = {
+            // TODO: Scan for available cells.
+            let mut inner = handle.scope.heap.inner.borrow_mut();
+            let index = inner.globals.len();
+            inner.globals.push(Some(HeapHandle::new(ptr)));
+            index
+        };
+        GlobalHandle {
+            inner: Arc::clone(&handle.scope.heap.inner),
+            index,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -310,12 +311,12 @@ mod tests {
     pub fn smoke_test() {
         let heap = Heap::new(1000).unwrap();
         assert_eq!(heap.used(), 0);
-        let two = {
+        let two: GlobalHandle = {
             let scope = HandleScope::new(&heap);
             let one = scope.create::<DropObject>().unwrap();
             let two = scope.create::<DropObject>().unwrap();
             std::mem::drop(one);
-            two.to_global()
+            two.into()
         };
         let used_before_collection = heap.used();
         heap.collect().unwrap();
@@ -395,7 +396,7 @@ mod tests {
         assert_eq!(2.0, two_value);
         let three_value = one_value + two_value;
         let three = scope.create_num(three_value);
-        let three_global = three.to_global();
+        let three_global = GlobalHandle::from(three);
         std::mem::drop(scope);
 
         let scope = HandleScope::new(&heap);

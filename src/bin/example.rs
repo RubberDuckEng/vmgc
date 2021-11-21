@@ -31,7 +31,7 @@ fn init() -> VM {
     let heap = Heap::new(1000).unwrap();
     let stack = {
         let scope = HandleScope::new(&heap);
-        scope.create::<Stack>().unwrap().to_global()
+        GlobalHandle::from(scope.create::<Stack>().unwrap())
     };
     VM { stack, heap }
 }
