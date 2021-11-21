@@ -15,6 +15,7 @@ Inspired in part by https://rust-hosted-langs.github.io/book/introduction.html
 * Some sort of typed Handle?
 * Consider making a HandleScope like AutoReleasePool?
 * Consider having a NonNullHandle type?
+* Collect on allocation
 
 # Blocking for wren integration
 * Examples of allocating every type including Null, Num, String, List, Map

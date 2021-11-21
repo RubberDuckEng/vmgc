@@ -256,7 +256,6 @@ mod tests {
         // Check if lookup works before collect.
         {
             let map_value = map.as_mut::<Map>().unwrap();
-            // FIXME: Lookup works with original Foo, hashing must be busted.
             let foo = heap.take(&scope, "Foo".to_string()).unwrap();
             let bar = scope.from_heap(map_value.get(&foo.into()).unwrap());
             assert_eq!(bar.as_ref::<String>().unwrap(), "Bar");
@@ -268,6 +267,5 @@ mod tests {
         let foo = heap.take(&scope, "Foo".to_string()).unwrap();
         let bar = scope.from_heap(map_value.get(&foo.into()).unwrap());
         assert_eq!(bar.as_ref::<String>().unwrap(), "Bar");
-        // TODO: Test that the map still works.
     }
 }

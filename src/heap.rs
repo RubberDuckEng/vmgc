@@ -123,7 +123,6 @@ struct HeapInner {
     globals: Vec<Option<HeapHandle>>,
     scopes: Vec<Vec<HeapHandle>>,
     object_cells: Vec<Option<WeakCell>>,
-    // TODO: Add Vec of weak pointers.
 }
 
 impl std::fmt::Debug for HeapInner {
@@ -240,12 +239,11 @@ impl Heap {
         }
         // FIXME: Move finalization somewhere less vulnerable to avoid dropping
         // host objects calling back into GC code while we're collecting.
+        // Should have a re-entrancy guard against host callbacks.
         for i in indicies_to_finalize {
             inner.object_cells[i] = None;
         }
 
-        // TODO: Scan the Vec of weak pointers to see if any are pointing into
-        // the from_space. If so, call their callbacks.
         std::mem::swap(&mut self.space, &mut visitor.space);
         Ok(())
     }
@@ -417,13 +415,10 @@ impl<'a> LocalHandle<'a> {
 
     pub fn as_ref<T: HostObject>(&self) -> Option<&T> {
         if let Some(object_ptr) = self.get_object_ptr() {
-            let header = object_ptr.header();
-            // TODO: We should use a single TYPE_ID for every HostObject.
-            // We only need specialized type IDs for HeapObjects.
-            if header.object_type != T::TYPE_ID {
+            // FIXME: Add ObjectPtr::is_type
+            if object_ptr.header().object_type != T::TYPE_ID {
                 return None;
             }
-
             let ptr = HeapTraceable::downcast::<T>(object_ptr);
             Some(unsafe { &*ptr })
         } else {
@@ -433,13 +428,10 @@ impl<'a> LocalHandle<'a> {
 
     pub fn as_mut<T: HostObject>(&self) -> Option<&mut T> {
         if let Some(object_ptr) = self.get_object_ptr() {
-            let header = object_ptr.header();
-            // TODO: We should use a single TYPE_ID for every HostObject.
-            // We only need specialized type IDs for HeapObjects.
-            if header.object_type != T::TYPE_ID {
+            // FIXME: Add ObjectPtr::is_type
+            if object_ptr.header().object_type != T::TYPE_ID {
                 return None;
             }
-
             let ptr = HeapTraceable::downcast_mut::<T>(object_ptr);
             Some(unsafe { &mut *ptr })
         } else {
