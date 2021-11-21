@@ -1,9 +1,9 @@
 use std::alloc::{alloc, dealloc, Layout};
 use std::any::Any;
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{HashMap, VecDeque};
 use std::convert::TryInto;
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 // use std::ptr::NonNull;
 use std::convert::AsMut;
 use std::sync::Arc;
@@ -67,9 +67,10 @@ impl Drop for Space {
 
 impl HeapHandle {
     fn visit(&mut self, visitor: &mut ObjectVisitor) {
-        let maybe_object_ptr: Option<ObjectPtr> = self.ptr.try_into().ok();
+        let maybe_object_ptr: Option<ObjectPtr> = self.ptr().try_into().ok();
         if let Some(object_ptr) = maybe_object_ptr {
-            self.ptr = visitor.visit_header(object_ptr.header()).into();
+            self._ptr
+                .set(visitor.visit_header(object_ptr.header()).into());
         }
     }
 }
@@ -163,9 +164,9 @@ impl ObjectVisitor {
         object_ptr
     }
 
-    pub fn visit(&mut self, handle: &mut HeapHandle) {
-        if let Some(header) = handle.ptr.header() {
-            handle.ptr = self.visit_header(header).into();
+    pub fn visit(&mut self, handle: &HeapHandle) {
+        if let Some(header) = handle.ptr().header() {
+            handle._ptr.set(self.visit_header(header).into());
         }
     }
 
@@ -313,7 +314,7 @@ impl GlobalHandle {
     fn ptr(&self) -> TaggedPtr {
         let inner = self.inner.borrow();
         let cell = inner.globals[self.index].as_ref().unwrap();
-        cell.ptr
+        cell.ptr()
     }
 }
 
@@ -352,7 +353,7 @@ impl HandleScope {
         let mut inner = self.inner.borrow_mut();
         let cells = &mut inner.scopes[self.index];
         let index = cells.len();
-        cells.push(HeapHandle { ptr });
+        cells.push(HeapHandle::new(ptr));
         index
     }
 
@@ -361,12 +362,12 @@ impl HandleScope {
     }
 
     pub fn from_heap(&self, handle: &HeapHandle) -> LocalHandle {
-        LocalHandle::new(self, handle.ptr)
+        LocalHandle::new(self, handle.ptr())
     }
 
     fn get_ptr(&self, index: usize) -> TaggedPtr {
         let inner = self.inner.borrow();
-        inner.scopes[self.index][index].ptr
+        inner.scopes[self.index][index].ptr()
     }
 }
 
@@ -401,7 +402,7 @@ impl<'a> LocalHandle<'a> {
             // TODO: Scan for available cells.
             let mut inner = self.scope.inner.borrow_mut();
             let index = inner.globals.len();
-            inner.globals.push(Some(HeapHandle { ptr }));
+            inner.globals.push(Some(HeapHandle::new(ptr)));
             index
         };
         GlobalHandle {
@@ -454,27 +455,53 @@ impl<'a> TryInto<f64> for LocalHandle<'a> {
     }
 }
 
-#[derive(Default, PartialEq, Eq, Hash)]
+#[derive(PartialEq, Eq)]
 #[repr(transparent)]
 pub struct HeapHandle {
-    pub ptr: TaggedPtr,
+    // Held in a Cell so that visit doesn't require mut self.
+    // visit() is the ONLY place where ptr should ever change.
+    _ptr: Cell<TaggedPtr>,
+}
+
+impl Default for HeapHandle {
+    fn default() -> Self {
+        HeapHandle::new(TaggedPtr::NULL)
+    }
+}
+
+impl Hash for HeapHandle {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.ptr().hash(state);
+    }
 }
 
 impl HeapHandle {
     pub fn new(ptr: TaggedPtr) -> HeapHandle {
-        HeapHandle { ptr }
+        HeapHandle {
+            _ptr: Cell::new(ptr),
+        }
+    }
+
+    pub fn ptr(&self) -> TaggedPtr {
+        self._ptr.get()
+    }
+
+    // This intentionally takes &mut self and has normal mutation
+    // rules, only visit() should use _ptr.set().
+    pub fn set_ptr(&mut self, ptr: TaggedPtr) {
+        self._ptr.set(ptr);
     }
 
     pub fn take(&mut self) -> HeapHandle {
-        let result = HeapHandle::new(self.ptr);
-        self.ptr = TaggedPtr::default();
+        let result = HeapHandle::new(self.ptr());
+        self.set_ptr(TaggedPtr::default());
         result
     }
 }
 
 impl<'a> From<LocalHandle<'a>> for HeapHandle {
     fn from(handle: LocalHandle<'a>) -> Self {
-        HeapHandle { ptr: handle.ptr() }
+        HeapHandle::new(handle.ptr())
     }
 }
 
@@ -540,8 +567,6 @@ impl Traceable for Map {
     #[allow(mutable_transmutes)] // !!!
     fn trace(&mut self, visitor: &mut ObjectVisitor) {
         for (key, value) in self.iter_mut() {
-            // TODO: We're not supposed to do this! What should we do instead?
-            let key = unsafe { std::mem::transmute(key) };
             visitor.visit(key);
             visitor.visit(value);
         }

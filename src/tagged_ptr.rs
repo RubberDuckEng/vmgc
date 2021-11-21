@@ -89,12 +89,10 @@ impl From<f64> for TaggedPtr {
 impl TryInto<f64> for TaggedPtr {
     type Error = GCError;
     fn try_into(self) -> Result<f64, GCError> {
-        unsafe {
-            if self.is_num() {
-                Ok(self.number)
-            } else {
-                Err(GCError::TypeError)
-            }
+        if self.is_num() {
+            Ok(unsafe { self.number })
+        } else {
+            Err(GCError::TypeError)
         }
     }
 }
@@ -127,10 +125,8 @@ impl TryFrom<TaggedPtr> for bool {
 
 impl From<ObjectPtr> for TaggedPtr {
     fn from(ptr: ObjectPtr) -> TaggedPtr {
-        unsafe {
-            TaggedPtr {
-                bits: std::mem::transmute::<ObjectPtr, usize>(ptr) | PTR_TAG_MASK,
-            }
+        TaggedPtr {
+            bits: unsafe { std::mem::transmute::<ObjectPtr, usize>(ptr) | PTR_TAG_MASK },
         }
     }
 }
@@ -138,14 +134,10 @@ impl From<ObjectPtr> for TaggedPtr {
 impl TryFrom<TaggedPtr> for ObjectPtr {
     type Error = GCError;
     fn try_from(tagged: TaggedPtr) -> Result<ObjectPtr, GCError> {
-        unsafe {
-            if tagged.is_ptr() {
-                Ok(std::mem::transmute::<usize, ObjectPtr>(
-                    tagged.bits & PTR_MASK,
-                ))
-            } else {
-                Err(GCError::TypeError)
-            }
+        if tagged.is_ptr() {
+            Ok(unsafe { std::mem::transmute::<usize, ObjectPtr>(tagged.bits & PTR_MASK) })
+        } else {
+            Err(GCError::TypeError)
         }
     }
 }

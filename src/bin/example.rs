@@ -40,15 +40,15 @@ fn init() -> VM {
 }
 
 fn num_add(_vm: &mut VM, args: &[HeapHandle], out: &mut HeapHandle) -> Result<(), GCError> {
-    let lhs: f64 = args[0].ptr.try_into()?;
-    let rhs: f64 = args[1].ptr.try_into()?;
-    out.ptr = (lhs + rhs).into();
+    let lhs: f64 = args[0].ptr().try_into()?;
+    let rhs: f64 = args[1].ptr().try_into()?;
+    out.set_ptr((lhs + rhs).into());
     Ok(())
 }
 
 fn num_is_nan(_vm: &mut VM, args: &[HeapHandle], out: &mut HeapHandle) -> Result<(), GCError> {
-    let num: f64 = args[0].ptr.try_into()?;
-    out.ptr = num.is_nan().into();
+    let num: f64 = args[0].ptr().try_into()?;
+    out.set_ptr(num.is_nan().into());
     Ok(())
 }
 
@@ -85,7 +85,7 @@ fn main() {
         let stack_handle = scope.from_global(&vm.stack);
         let stack = stack_handle.as_mut::<Stack>().unwrap();
 
-        let result: f64 = stack.values[0].ptr.try_into().unwrap();
+        let result: f64 = stack.values[0].ptr().try_into().unwrap();
         println!("1 + 2 = {}", result);
     }
 
@@ -108,7 +108,7 @@ fn main() {
         let stack_handle = scope.from_global(&vm.stack);
         let stack = stack_handle.as_mut::<Stack>().unwrap();
 
-        let result: bool = stack.values[0].ptr.try_into().unwrap();
+        let result: bool = stack.values[0].ptr().try_into().unwrap();
         println!("3.is_nan = {}", result);
     }
 }
