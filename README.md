@@ -20,4 +20,29 @@ Inspired in part by https://rust-hosted-langs.github.io/book/introduction.html
 
 # Blocking for wren integration
 * Example of passing LocalHandle
+    fn emit_constant(ctx: &mut ParseContext, value: LocalHandle) -> Result<(), WrenError> {
+        let index = ensure_constant(ctx, value)?;
+        emit(ctx, Ops::Constant(index));
+        Ok(())
+    }
+    fn store_this(&self, frame: &CallFrame, value: LocalHandle) {
+        self.store_local(frame, 0, value)
+    }
+    pub(crate) fn new(
+        vm: &VM,
+        closure: Handle<ObjClosure>,
+        run_source: FiberRunSource,
+    ) -> ObjFiber {
+    }
+* Example of saving a handle passed into you, or copying and returning a new handle.
 * Example of returning some type of handle?
+    pub(crate) fn variable_by_name(&self, name: &str) -> Option<Value> {
+        self.lookup_symbol(name)
+            .map(|index| self.variables[index as usize].clone())
+    }
+    fn as_try_return_value(&self) -> Value {
+        match self {
+            VMError::Error(string) => Value::from_str(string),
+            VMError::FiberAbort(value) => value.clone(),
+        }
+    }
