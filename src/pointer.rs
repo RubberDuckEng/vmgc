@@ -5,6 +5,8 @@ use crate::object::TraceableObject;
 use crate::space::Space;
 use crate::types::*;
 
+// f64.from_bits and f64.to_bits exist, it might be
+// possible to do this without unsafe and w/o a union.
 #[derive(Copy, Clone)]
 #[repr(C)]
 pub union TaggedPtr {
