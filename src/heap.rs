@@ -110,23 +110,6 @@ impl Heap {
         }));
         Ok(object_ptr)
     }
-
-    pub fn allocate<'a, T: HostObject>(
-        &self,
-        scope: &'a HandleScope,
-    ) -> Result<LocalHandle<'a>, GCError> {
-        let object_ptr = self.emplace(Box::new(T::default()))?;
-        Ok(LocalHandle::new(scope, object_ptr.into()))
-    }
-
-    pub fn take<'a, T: HostObject>(
-        &self,
-        scope: &'a HandleScope,
-        object: T,
-    ) -> Result<LocalHandle<'a>, GCError> {
-        let object_ptr = self.emplace(Box::new(object))?;
-        Ok(LocalHandle::new(scope, object_ptr.into()))
-    }
 }
 
 // Rename as Root
@@ -170,6 +153,16 @@ impl<'a> HandleScope<'a> {
 
     pub fn create_null(&self) -> LocalHandle {
         LocalHandle::new(self, TaggedPtr::NULL)
+    }
+
+    pub fn create<T: HostObject>(&self) -> Result<LocalHandle, GCError> {
+        let object_ptr = self.heap.emplace(Box::new(T::default()))?;
+        Ok(LocalHandle::new(self, object_ptr.into()))
+    }
+
+    pub fn take<T: HostObject>(&self, object: T) -> Result<LocalHandle, GCError> {
+        let object_ptr = self.heap.emplace(Box::new(object))?;
+        Ok(LocalHandle::new(self, object_ptr.into()))
     }
 
     fn add(&self, ptr: TaggedPtr) -> usize {
@@ -319,8 +312,8 @@ mod tests {
         assert_eq!(heap.used(), 0);
         let two = {
             let scope = HandleScope::new(&heap);
-            let one = heap.allocate::<DropObject>(&scope).unwrap();
-            let two = heap.allocate::<DropObject>(&scope).unwrap();
+            let one = scope.create::<DropObject>().unwrap();
+            let two = scope.create::<DropObject>().unwrap();
             std::mem::drop(one);
             two.to_global()
         };
@@ -340,7 +333,7 @@ mod tests {
         let counter = Rc::new(Cell::new(0));
         let scope = HandleScope::new(&heap);
 
-        let handle = heap.allocate::<DropObject>(&scope).unwrap();
+        let handle = scope.create::<DropObject>().unwrap();
         handle.as_mut::<DropObject>().unwrap().counter = Rc::clone(&counter);
         std::mem::drop(handle);
         assert_eq!(0u32, counter.get());
@@ -354,15 +347,15 @@ mod tests {
     fn tracing_test() {
         let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
-        let handle = heap.allocate::<List>(&scope).unwrap();
+        let handle = scope.create::<List>().unwrap();
 
         let list = handle.as_mut::<List>().unwrap();
         list.values
-            .push(heap.allocate::<DropObject>(&scope).unwrap().into());
+            .push(scope.create::<DropObject>().unwrap().into());
         list.values
-            .push(heap.allocate::<DropObject>(&scope).unwrap().into());
+            .push(scope.create::<DropObject>().unwrap().into());
         list.values
-            .push(heap.allocate::<DropObject>(&scope).unwrap().into());
+            .push(scope.create::<DropObject>().unwrap().into());
         std::mem::drop(list);
 
         let used = heap.used();
@@ -415,7 +408,7 @@ mod tests {
     fn list_push_test() {
         let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
-        let list = heap.allocate::<List>(&scope).unwrap();
+        let list = scope.create::<List>().unwrap();
         let one = scope.create_num(1.0);
         let list_value = list.as_mut::<List>().unwrap();
         list_value.values.push(one.into());
@@ -429,7 +422,7 @@ mod tests {
     fn string_test() {
         let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
-        let string_handle = heap.allocate::<String>(&scope).unwrap();
+        let string_handle = scope.create::<String>().unwrap();
         heap.collect().ok();
         let string_value = string_handle.as_ref::<String>().unwrap();
         assert_eq!(string_value, "");
@@ -439,7 +432,7 @@ mod tests {
     fn take_string_test() {
         let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
-        let string_handle = heap.take(&scope, "Foo".to_string()).unwrap();
+        let string_handle = scope.take("Foo".to_string()).unwrap();
         heap.collect().ok();
         let string_value = string_handle.as_ref::<String>().unwrap();
         assert_eq!(string_value, "Foo");
@@ -449,8 +442,8 @@ mod tests {
     fn list_push_string_twice_test() {
         let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
-        let list = heap.allocate::<List>(&scope).unwrap();
-        let string = heap.take(&scope, "Foo".to_string()).unwrap();
+        let list = scope.create::<List>().unwrap();
+        let string = scope.take("Foo".to_string()).unwrap();
         let list_value = list.as_mut::<List>().unwrap();
         list_value.values.push(string.into());
         list_value.values.push(string.into());
@@ -486,9 +479,9 @@ mod tests {
     fn map_insert_test() {
         let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
-        let map = heap.allocate::<Map>(&scope).unwrap();
-        let foo = heap.take(&scope, "Foo".to_string()).unwrap();
-        let bar = heap.take(&scope, "Bar".to_string()).unwrap();
+        let map = scope.create::<Map>().unwrap();
+        let foo = scope.take("Foo".to_string()).unwrap();
+        let bar = scope.take("Bar".to_string()).unwrap();
         let map_value = map.as_mut::<Map>().unwrap();
         map_value.insert(foo.into(), bar.into());
         std::mem::drop(map_value);
@@ -498,7 +491,7 @@ mod tests {
         // Check if lookup works before collect.
         {
             let map_value = map.as_mut::<Map>().unwrap();
-            let foo = heap.take(&scope, "Foo".to_string()).unwrap();
+            let foo = scope.take("Foo".to_string()).unwrap();
             let bar = scope.from_heap(map_value.get(&foo.into()).unwrap());
             assert_eq!(bar.as_ref::<String>().unwrap(), "Bar");
         }
@@ -506,7 +499,7 @@ mod tests {
         heap.collect().ok();
 
         let map_value = map.as_mut::<Map>().unwrap();
-        let foo = heap.take(&scope, "Foo".to_string()).unwrap();
+        let foo = scope.take("Foo".to_string()).unwrap();
         let bar = scope.from_heap(map_value.get(&foo.into()).unwrap());
         assert_eq!(bar.as_ref::<String>().unwrap(), "Bar");
     }

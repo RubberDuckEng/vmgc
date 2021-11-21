@@ -31,7 +31,7 @@ fn init() -> VM {
     let heap = Heap::new(1000).unwrap();
     let stack = {
         let scope = HandleScope::new(&heap);
-        heap.allocate::<Stack>(&scope).unwrap().to_global()
+        scope.create::<Stack>().unwrap().to_global()
     };
     VM { stack, heap }
 }
