@@ -185,8 +185,7 @@ impl Hash for TaggedPtr {
 pub struct ObjectPtr(*mut u8);
 
 impl ObjectPtr {
-    // public only for testing.
-    pub fn new(addr: *mut u8) -> ObjectPtr {
+    fn new(addr: *mut u8) -> ObjectPtr {
         ObjectPtr(addr)
     }
 
@@ -253,11 +252,11 @@ impl ObjectHeader {
         Ok(header)
     }
 
-    pub fn from_ptr<'a>(header_ptr: HeaderPtr) -> &'a mut ObjectHeader {
+    fn from_ptr<'a>(header_ptr: HeaderPtr) -> &'a mut ObjectHeader {
         unsafe { &mut *(header_ptr.addr() as *mut ObjectHeader) }
     }
 
-    pub fn from_object_ptr<'a>(object_ptr: ObjectPtr) -> &'a mut ObjectHeader {
+    fn from_object_ptr<'a>(object_ptr: ObjectPtr) -> &'a mut ObjectHeader {
         Self::from_ptr(object_ptr.to_header_ptr())
     }
 

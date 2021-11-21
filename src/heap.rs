@@ -201,7 +201,7 @@ impl<'a> LocalHandle<'a> {
         }
     }
 
-    pub fn ptr(&self) -> TaggedPtr {
+    fn ptr(&self) -> TaggedPtr {
         self.scope.get_ptr(self.index)
     }
 
