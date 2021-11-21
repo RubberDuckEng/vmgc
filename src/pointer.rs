@@ -1,9 +1,9 @@
 use std::convert::{From, TryFrom, TryInto};
 use std::hash::{Hash, Hasher};
 
-use crate::heap::HeapTraceable;
-use crate::object::{ObjectHeader, ObjectPtr};
-use crate::types::*; // FIXME: Remove.
+use crate::object::TraceableObject;
+use crate::space::Space;
+use crate::types::*;
 
 #[derive(Copy, Clone)]
 #[repr(C)]
@@ -156,7 +156,7 @@ impl PartialEq for TaggedPtr {
         if self.is_ptr() {
             let lhs_ptr = self.clone().try_into().unwrap();
             let rhs_ptr = rhs.clone().try_into().unwrap();
-            let lhs_object = HeapTraceable::load(lhs_ptr);
+            let lhs_object = TraceableObject::load(lhs_ptr);
             lhs_object.as_traceable().object_eq(lhs_ptr, rhs_ptr)
         } else {
             unsafe { self.bits == rhs.bits }
@@ -170,11 +170,103 @@ impl Hash for TaggedPtr {
     fn hash<H: Hasher>(&self, state: &mut H) {
         if self.is_ptr() {
             let ptr = self.clone().try_into().unwrap();
-            let object = HeapTraceable::load(ptr);
+            let object = TraceableObject::load(ptr);
             object.as_traceable().object_hash(ptr).hash(state);
         } else {
             unsafe { self.bits.hash(state) }
         }
+    }
+}
+
+// ObjectPtr could have a generation number, and thus we could know
+// if we ever forgot one between generations (and thus was invalid).
+#[derive(Copy, Clone, Debug)]
+#[repr(transparent)]
+pub struct ObjectPtr(*mut u8);
+
+impl ObjectPtr {
+    // public only for testing.
+    pub fn new(addr: *mut u8) -> ObjectPtr {
+        ObjectPtr(addr)
+    }
+
+    pub fn addr(&self) -> *mut u8 {
+        self.0
+    }
+
+    fn to_header_ptr(&self) -> HeaderPtr {
+        HeaderPtr::new(unsafe { self.addr().sub(HEADER_SIZE) })
+    }
+
+    pub fn header(&self) -> &mut ObjectHeader {
+        ObjectHeader::from_object_ptr(*self)
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+#[repr(transparent)]
+pub struct HeaderPtr(*mut u8);
+
+impl HeaderPtr {
+    pub fn new(addr: *mut u8) -> HeaderPtr {
+        HeaderPtr(addr)
+    }
+
+    pub fn addr(&self) -> *mut u8 {
+        self.0
+    }
+
+    pub fn to_object_ptr(&self) -> ObjectPtr {
+        ObjectPtr::new(unsafe { self.addr().add(HEADER_SIZE) })
+    }
+}
+
+#[derive(Debug, PartialEq)]
+#[repr(u16)]
+pub enum ObjectType {
+    Host,
+}
+
+#[derive(Debug)]
+#[repr(C)]
+pub struct ObjectHeader {
+    object_size: usize,
+    pub object_type: ObjectType,
+
+    // When we move the object to the new space, we'll record in this field
+    // where we moved it to.
+    pub new_header_ptr: Option<HeaderPtr>,
+}
+
+const HEADER_SIZE: usize = std::mem::size_of::<ObjectHeader>();
+
+impl ObjectHeader {
+    pub fn new<'a>(
+        space: &mut Space,
+        object_size: usize,
+        object_type: ObjectType,
+    ) -> Result<&'a mut ObjectHeader, GCError> {
+        let header_ptr = HeaderPtr::new(space.alloc(HEADER_SIZE + object_size)?);
+        let header = ObjectHeader::from_ptr(header_ptr);
+        header.object_size = object_size;
+        header.object_type = object_type;
+        Ok(header)
+    }
+
+    pub fn from_ptr<'a>(header_ptr: HeaderPtr) -> &'a mut ObjectHeader {
+        unsafe { &mut *(header_ptr.addr() as *mut ObjectHeader) }
+    }
+
+    pub fn from_object_ptr<'a>(object_ptr: ObjectPtr) -> &'a mut ObjectHeader {
+        Self::from_ptr(object_ptr.to_header_ptr())
+    }
+
+    pub fn alloc_size(&self) -> usize {
+        HEADER_SIZE + self.object_size
+    }
+
+    pub fn as_ptr(&mut self) -> HeaderPtr {
+        HeaderPtr::new(self as *mut ObjectHeader as *mut u8)
     }
 }
 

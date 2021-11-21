@@ -1,8 +1,7 @@
 use std::convert::TryInto;
-use vmgc::heap::{
-    GlobalHandle, HandleScope, Heap, HeapHandle, HostObject, ObjectVisitor, Traceable,
-};
-use vmgc::object::ObjectType;
+use vmgc::heap::*;
+use vmgc::object::*;
+use vmgc::pointer::ObjectType;
 use vmgc::types::GCError;
 
 // Holds the heap and the stack.

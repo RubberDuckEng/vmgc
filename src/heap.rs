@@ -1,111 +1,16 @@
-use std::alloc::{alloc, dealloc, Layout};
-use std::any::Any;
-use std::cell::{Cell, RefCell};
-use std::collections::{HashMap, VecDeque};
-use std::convert::TryInto;
-use std::hash::{Hash, Hasher};
-// use std::ptr::NonNull;
+use std::cell::RefCell;
 use std::convert::AsMut;
+use std::convert::TryInto;
 use std::sync::Arc;
 
 use crate::object::*;
-use crate::tagged_ptr::TaggedPtr;
+use crate::pointer::*;
+use crate::space::*;
 use crate::types::*;
-
-#[derive(Debug)]
-pub struct Space {
-    layout: Layout,
-    base: *mut u8,
-    size: usize,
-    next: *mut u8,
-}
-
-impl Space {
-    fn new(size: usize) -> Result<Space, GCError> {
-        // TODO: Should we allocte on a 4k boundary? Might have implications
-        // for returning memory to the system.
-        let layout = Layout::from_size_align(size, 0x1000).map_err(|_| GCError::NoSpace)?;
-        let ptr = unsafe { alloc(layout) };
-        if ptr.is_null() {
-            return Err(GCError::OSOutOfMemory);
-        }
-        Ok(Space {
-            layout,
-            base: ptr,
-            size,
-            next: ptr,
-        })
-    }
-
-    // TODO: The client should be able to specify the alignment.
-    pub fn alloc(&mut self, size: usize) -> Result<*mut u8, GCError> {
-        let allocated = self.used();
-        if allocated.checked_add(size).ok_or(GCError::NoSpace)? > self.size {
-            return Err(GCError::NoSpace);
-        }
-        let result = self.next;
-        unsafe {
-            self.next = result.add(size);
-            result.write_bytes(0, size);
-        }
-        Ok(result)
-    }
-
-    fn used(&self) -> usize {
-        unsafe { self.next.offset_from(self.base) as usize }
-    }
-}
-
-impl Drop for Space {
-    fn drop(&mut self) {
-        unsafe {
-            self.base.write_bytes(0, self.used());
-            dealloc(self.base, self.layout);
-        }
-    }
-}
 
 struct WeakCell {
     _value: Box<dyn Traceable>,
     ptr: TaggedPtr,
-}
-
-#[repr(C)]
-pub struct HeapTraceable {
-    ptr: *mut dyn Traceable,
-}
-
-impl HeapTraceable {
-    fn new(pinned: &mut dyn Traceable) -> HeapTraceable {
-        HeapTraceable {
-            ptr: pinned as *mut dyn Traceable,
-        }
-    }
-
-    fn store(&self, object_ptr: ObjectPtr) {
-        unsafe {
-            *(object_ptr.addr() as *mut *mut dyn Traceable) = self.ptr;
-        }
-    }
-
-    pub fn load(object_ptr: ObjectPtr) -> HeapTraceable {
-        let traceable_ptr = unsafe { *(object_ptr.addr() as *mut *mut dyn Traceable) };
-        HeapTraceable { ptr: traceable_ptr }
-    }
-
-    pub fn as_traceable(&self) -> &mut dyn Traceable {
-        unsafe { &mut (*self.ptr) }
-    }
-
-    fn downcast<T: 'static>(object_ptr: ObjectPtr) -> *const T {
-        let traceable_ptr = unsafe { *(object_ptr.addr() as *const *const dyn Traceable) };
-        let traceable_ref = unsafe { &(*traceable_ptr) };
-        traceable_ref.as_any().downcast_ref().unwrap() as *const T
-    }
-
-    fn downcast_mut<T: 'static>(object_ptr: ObjectPtr) -> *mut T {
-        Self::downcast::<T>(object_ptr) as *mut T
-    }
 }
 
 #[derive(Default)]
@@ -118,54 +23,6 @@ struct HeapInner {
 impl std::fmt::Debug for HeapInner {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("HeapInner").finish()
-    }
-}
-
-pub struct ObjectVisitor {
-    space: Space,
-    queue: VecDeque<ObjectPtr>,
-}
-
-impl ObjectVisitor {
-    fn new(space: Space) -> ObjectVisitor {
-        ObjectVisitor {
-            space,
-            queue: VecDeque::default(),
-        }
-    }
-
-    fn visit(&mut self, header: &mut ObjectHeader) -> ObjectPtr {
-        if let Some(new_header_ptr) = header.new_header_ptr {
-            return new_header_ptr.to_object_ptr();
-        }
-        let alloc_size = header.alloc_size();
-        let new_header_ptr = HeaderPtr::new(self.space.alloc(alloc_size).unwrap());
-        unsafe {
-            std::ptr::copy_nonoverlapping(
-                header.as_ptr().addr(),
-                new_header_ptr.addr(),
-                alloc_size,
-            );
-        }
-        header.new_header_ptr = Some(new_header_ptr);
-        let object_ptr = new_header_ptr.to_object_ptr();
-        self.queue.push_back(object_ptr);
-        object_ptr
-    }
-
-    pub fn trace_handles(&mut self, handles: &Vec<HeapHandle>) {
-        for index in 0..handles.len() {
-            let handle = &handles[index];
-            handle.trace(self);
-        }
-    }
-
-    fn trace_maybe_handles(&mut self, handles: &Vec<Option<HeapHandle>>) {
-        for index in 0..handles.len() {
-            if let Some(handle) = &handles[index] {
-                handle.trace(self);
-            }
-        }
     }
 }
 
@@ -201,7 +58,7 @@ impl Heap {
         }
 
         while let Some(object_ptr) = visitor.queue.pop_front() {
-            let object = HeapTraceable::load(object_ptr);
+            let object = TraceableObject::load(object_ptr);
             let traceable = object.as_traceable();
             traceable.trace(&mut visitor);
         }
@@ -237,11 +94,11 @@ impl Heap {
     }
 
     fn take_object<T: HostObject>(&mut self, mut object: Box<T>) -> Result<ObjectPtr, GCError> {
-        let object_size = std::mem::size_of::<HeapTraceable>();
+        let object_size = std::mem::size_of::<TraceableObject>();
         let header = ObjectHeader::new(&mut self.space, object_size, T::TYPE_ID)?;
         let object_ptr = header.as_ptr().to_object_ptr();
         let mut inner = self.inner.borrow_mut();
-        HeapTraceable::new(object.as_mut()).store(object_ptr);
+        TraceableObject::new(object.as_mut()).store(object_ptr);
         inner.object_cells.push(Some(WeakCell {
             _value: object,
             ptr: object_ptr.into(),
@@ -403,7 +260,7 @@ impl<'a> LocalHandle<'a> {
             if object_ptr.header().object_type != T::TYPE_ID {
                 return None;
             }
-            let ptr = HeapTraceable::downcast::<T>(object_ptr);
+            let ptr = TraceableObject::downcast::<T>(object_ptr);
             Some(unsafe { &*ptr })
         } else {
             None
@@ -416,7 +273,7 @@ impl<'a> LocalHandle<'a> {
             if object_ptr.header().object_type != T::TYPE_ID {
                 return None;
             }
-            let ptr = HeapTraceable::downcast_mut::<T>(object_ptr);
+            let ptr = TraceableObject::downcast_mut::<T>(object_ptr);
             Some(unsafe { &mut *ptr })
         } else {
             None
@@ -431,138 +288,242 @@ impl<'a> TryInto<f64> for LocalHandle<'a> {
     }
 }
 
-#[derive(PartialEq, Eq)]
-#[repr(transparent)]
-pub struct HeapHandle {
-    // Held in a Cell so that visit doesn't require mut self.
-    // visit() is the ONLY place where ptr should ever change.
-    ptr: Cell<TaggedPtr>,
-}
-
-impl Default for HeapHandle {
-    fn default() -> Self {
-        HeapHandle::new(TaggedPtr::NULL)
-    }
-}
-
-impl Hash for HeapHandle {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.ptr().hash(state);
-    }
-}
-
-impl HeapHandle {
-    pub fn new(ptr: TaggedPtr) -> HeapHandle {
-        HeapHandle {
-            ptr: Cell::new(ptr),
-        }
-    }
-
-    pub fn ptr(&self) -> TaggedPtr {
-        self.ptr.get()
-    }
-
-    pub fn trace(&self, visitor: &mut ObjectVisitor) {
-        if let Some(header) = self.ptr().header() {
-            self.ptr.set(visitor.visit(header).into());
-        }
-    }
-
-    // This intentionally takes &mut self and has normal mutation
-    // rules, only visit() should use _ptr.set().
-    pub fn set_ptr(&mut self, ptr: TaggedPtr) {
-        self.ptr.set(ptr);
-    }
-
-    pub fn take(&mut self) -> HeapHandle {
-        let result = HeapHandle::new(self.ptr());
-        self.set_ptr(TaggedPtr::default());
-        result
-    }
-}
-
 impl<'a> From<LocalHandle<'a>> for HeapHandle {
     fn from(handle: LocalHandle<'a>) -> Self {
         HeapHandle::new(handle.ptr())
     }
 }
 
-pub trait AsAny: Any {
-    fn as_any(&self) -> &dyn Any;
-    fn type_name(&self) -> &'static str;
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl<T: Any> AsAny for T {
-    fn as_any(&self) -> &dyn Any {
-        self
+    use std::cell::Cell;
+    use std::convert::TryInto;
+    use std::hash::{Hash, Hasher};
+    use std::rc::Rc;
+
+    #[derive(Default)]
+    struct DropObject {
+        counter: Rc<Cell<u32>>,
     }
 
-    fn type_name(&self) -> &'static str {
-        std::any::type_name::<T>()
-    }
-}
-pub trait Traceable: AsAny {
-    fn trace(&mut self, _visitor: &mut ObjectVisitor);
-
-    // Using Hash<T> includes a type parameter, which makes Tracable no longer
-    // dyn compatible and the rust compiler barfs. :/
-    // fn object_hash(&self) -> u64 {
-    //     let mut hasher = DefaultHasher::new();
-    //     std::ptr::hash(self as *const dyn Traceable, &mut hasher);
-    //     hasher.finish()
-    // }
-
-    // fn object_eq(&self, rhs: &dyn Traceable) -> bool {
-    //     std::ptr::eq(self as *const dyn Traceable, rhs as *const dyn Traceable)
-    // }
-
-    fn object_hash(&self, ptr: ObjectPtr) -> u64 {
-        ptr.addr() as u64
+    impl HostObject for DropObject {
+        const TYPE_ID: ObjectType = ObjectType::Host;
     }
 
-    fn object_eq(&self, lhs: ObjectPtr, rhs: ObjectPtr) -> bool {
-        lhs.addr().eq(&rhs.addr())
-    }
-}
-
-// We will eventually add a HeapObject as an optimization
-// for things which don't hold pointers out to rust objects.
-pub trait HostObject: Traceable + Default {
-    const TYPE_ID: ObjectType;
-}
-
-impl HostObject for String {
-    const TYPE_ID: ObjectType = ObjectType::Host;
-}
-
-impl Traceable for String {
-    fn trace(&mut self, _visitor: &mut ObjectVisitor) {}
-
-    fn object_hash(&self, _ptr: ObjectPtr) -> u64 {
-        let mut hasher = std::collections::hash_map::DefaultHasher::new();
-        self.hash(&mut hasher);
-        hasher.finish()
+    impl Traceable for DropObject {
+        fn trace(&mut self, _visitor: &mut ObjectVisitor) {}
     }
 
-    fn object_eq(&self, _lhs: ObjectPtr, rhs_object_ptr: ObjectPtr) -> bool {
-        // FIXME: This depends on the caller having passed the correct ObjectPtr
-        let rhs_ptr = HeapTraceable::downcast::<String>(rhs_object_ptr);
-        let rhs = unsafe { &*rhs_ptr };
-        self.eq(rhs)
-    }
-}
-
-pub type Map = HashMap<HeapHandle, HeapHandle>;
-
-impl HostObject for Map {
-    const TYPE_ID: ObjectType = ObjectType::Host;
-}
-
-impl Traceable for Map {
-    fn trace(&mut self, visitor: &mut ObjectVisitor) {
-        for (key, value) in self.iter_mut() {
-            key.trace(visitor);
-            value.trace(visitor);
+    impl Drop for DropObject {
+        fn drop(&mut self) {
+            let counter = self.counter.get();
+            self.counter.set(counter + 1);
         }
+    }
+
+    impl Hash for DropObject {
+        fn hash<H: Hasher>(&self, state: &mut H) {
+            (self as *const DropObject as usize).hash(state);
+        }
+    }
+
+    #[test]
+    pub fn smoke_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        assert_eq!(heap.used(), 0);
+        let two = {
+            let scope = HandleScope::new(&heap);
+            let one = heap.allocate::<DropObject>(&scope).unwrap();
+            let two = heap.allocate::<DropObject>(&scope).unwrap();
+            std::mem::drop(one);
+            two.to_global()
+        };
+        let used_before_collection = heap.used();
+        heap.collect().unwrap();
+        let used_after_collection = heap.used();
+        assert!(0 < used_after_collection);
+        assert!(used_before_collection > used_after_collection);
+        std::mem::drop(two);
+        heap.collect().unwrap();
+        assert_eq!(0, heap.used());
+    }
+
+    #[test]
+    fn finalizer_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        let counter = Rc::new(Cell::new(0));
+        let scope = HandleScope::new(&heap);
+
+        let handle = heap.allocate::<DropObject>(&scope).unwrap();
+        handle.as_mut::<DropObject>().unwrap().counter = Rc::clone(&counter);
+        std::mem::drop(handle);
+        assert_eq!(0u32, counter.get());
+        std::mem::drop(scope);
+        assert_eq!(0u32, counter.get());
+        heap.collect().ok();
+        assert_eq!(1u32, counter.get());
+    }
+
+    #[test]
+    fn tracing_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        let scope = HandleScope::new(&heap);
+        let handle = heap.allocate::<List>(&scope).unwrap();
+
+        let list = handle.as_mut::<List>().unwrap();
+        list.values
+            .push(heap.allocate::<DropObject>(&scope).unwrap().into());
+        list.values
+            .push(heap.allocate::<DropObject>(&scope).unwrap().into());
+        list.values
+            .push(heap.allocate::<DropObject>(&scope).unwrap().into());
+        std::mem::drop(list);
+
+        let used = heap.used();
+        heap.collect().ok();
+        assert_eq!(used, heap.used());
+        std::mem::drop(handle);
+        heap.collect().ok();
+        assert_eq!(used, heap.used());
+        std::mem::drop(scope);
+        heap.collect().ok();
+        assert_eq!(0, heap.used());
+    }
+
+    #[test]
+    fn tagged_num_test() {
+        let heap = Heap::new(1000).unwrap();
+        let scope = HandleScope::new(&heap);
+
+        let a = scope.create_num(1.0);
+        let b = scope.create_num(2.0);
+        assert_eq!(0, heap.used());
+        let a_value: f64 = a.ptr().try_into().unwrap();
+        assert_eq!(1.0, a_value);
+        let b_value: f64 = b.ptr().try_into().unwrap();
+        assert_eq!(2.0, b_value);
+    }
+
+    #[test]
+    fn add_f64_test() {
+        let heap = Heap::new(1000).unwrap();
+        let scope = HandleScope::new(&heap);
+        let one = scope.create_num(1.0);
+        let two = scope.create_num(2.0);
+        let one_value: f64 = one.try_into().unwrap();
+        assert_eq!(1.0, one_value);
+        let two_value: f64 = two.try_into().unwrap();
+        assert_eq!(2.0, two_value);
+        let three_value = one_value + two_value;
+        let three = scope.create_num(three_value);
+        let three_global = three.to_global();
+        std::mem::drop(scope);
+
+        let scope = HandleScope::new(&heap);
+        let three = scope.from_global(&three_global);
+        let three_value: f64 = three.try_into().unwrap();
+        assert_eq!(3.0, three_value);
+    }
+
+    #[test]
+    fn list_push_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        let scope = HandleScope::new(&heap);
+        let list = heap.allocate::<List>(&scope).unwrap();
+        let one = scope.create_num(1.0);
+        let list_value = list.as_mut::<List>().unwrap();
+        list_value.values.push(one.into());
+        std::mem::drop(list_value);
+        heap.collect().ok();
+        let list_value = list.as_mut::<List>().unwrap();
+        assert_eq!(list_value.values.len(), 1);
+    }
+
+    #[test]
+    fn string_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        let scope = HandleScope::new(&heap);
+        let string_handle = heap.allocate::<String>(&scope).unwrap();
+        heap.collect().ok();
+        let string_value = string_handle.as_ref::<String>().unwrap();
+        assert_eq!(string_value, "");
+    }
+
+    #[test]
+    fn take_string_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        let scope = HandleScope::new(&heap);
+        let string_handle = heap.take(&scope, "Foo".to_string()).unwrap();
+        heap.collect().ok();
+        let string_value = string_handle.as_ref::<String>().unwrap();
+        assert_eq!(string_value, "Foo");
+    }
+
+    #[test]
+    fn list_push_string_twice_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        let scope = HandleScope::new(&heap);
+        let list = heap.allocate::<List>(&scope).unwrap();
+        let string = heap.take(&scope, "Foo".to_string()).unwrap();
+        let list_value = list.as_mut::<List>().unwrap();
+        list_value.values.push(string.into());
+        list_value.values.push(string.into());
+        std::mem::drop(list_value);
+        heap.collect().ok();
+        let list_value = list.as_mut::<List>().unwrap();
+        assert_eq!(list_value.values.len(), 2);
+        assert_eq!(
+            scope
+                .from_heap(&list_value.values[0])
+                .as_ref::<String>()
+                .unwrap(),
+            "Foo"
+        );
+        assert_eq!(
+            scope
+                .from_heap(&list_value.values[1])
+                .as_ref::<String>()
+                .unwrap(),
+            "Foo"
+        );
+        string.as_mut::<String>().unwrap().push_str("Bar");
+        assert_eq!(
+            scope
+                .from_heap(&list_value.values[0])
+                .as_ref::<String>()
+                .unwrap(),
+            "FooBar"
+        );
+    }
+
+    #[test]
+    fn map_insert_test() {
+        let mut heap = Heap::new(1000).unwrap();
+        let scope = HandleScope::new(&heap);
+        let map = heap.allocate::<Map>(&scope).unwrap();
+        let foo = heap.take(&scope, "Foo".to_string()).unwrap();
+        let bar = heap.take(&scope, "Bar".to_string()).unwrap();
+        let map_value = map.as_mut::<Map>().unwrap();
+        map_value.insert(foo.into(), bar.into());
+        std::mem::drop(map_value);
+        std::mem::drop(foo);
+        std::mem::drop(bar);
+
+        // Check if lookup works before collect.
+        {
+            let map_value = map.as_mut::<Map>().unwrap();
+            let foo = heap.take(&scope, "Foo".to_string()).unwrap();
+            let bar = scope.from_heap(map_value.get(&foo.into()).unwrap());
+            assert_eq!(bar.as_ref::<String>().unwrap(), "Bar");
+        }
+
+        heap.collect().ok();
+
+        let map_value = map.as_mut::<Map>().unwrap();
+        let foo = heap.take(&scope, "Foo".to_string()).unwrap();
+        let bar = scope.from_heap(map_value.get(&foo.into()).unwrap());
+        assert_eq!(bar.as_ref::<String>().unwrap(), "Bar");
     }
 }
