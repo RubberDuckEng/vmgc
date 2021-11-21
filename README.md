@@ -17,7 +17,6 @@ Inspired in part by https://rust-hosted-langs.github.io/book/introduction.html
 * Consider having a NonNullHandle type?
 
 # Blocking for wren integration
-* A HeapMap type which takes handles.
 * Examples of allocating every type including Null, Num, String, List, Map
 * Example of passing LocalHandle
 * Example of returning some type of handle?
