@@ -28,29 +28,29 @@ impl Traceable for Stack {
 }
 
 fn init() -> VM {
-    let mut heap = Heap::new(1000).unwrap();
-    let scope = HandleScope::new(&heap);
-    VM {
-        stack: heap.allocate::<Stack>(&scope).unwrap().to_global(),
-        heap,
-    }
+    let heap = Heap::new(1000).unwrap();
+    let stack = {
+        let scope = HandleScope::new(&heap);
+        heap.allocate::<Stack>(&scope).unwrap().to_global()
+    };
+    VM { stack, heap }
 }
 
-fn num_add(_vm: &mut VM, args: &[HeapHandle], out: &mut HeapHandle) -> Result<(), GCError> {
+fn num_add(_vm: &VM, args: &[HeapHandle], out: &mut HeapHandle) -> Result<(), GCError> {
     let lhs: f64 = args[0].ptr().try_into()?;
     let rhs: f64 = args[1].ptr().try_into()?;
     out.set_ptr((lhs + rhs).into());
     Ok(())
 }
 
-fn num_is_nan(_vm: &mut VM, args: &[HeapHandle], out: &mut HeapHandle) -> Result<(), GCError> {
+fn num_is_nan(_vm: &VM, args: &[HeapHandle], out: &mut HeapHandle) -> Result<(), GCError> {
     let num: f64 = args[0].ptr().try_into()?;
     out.set_ptr(num.is_nan().into());
     Ok(())
 }
 
 fn main() {
-    let mut vm = init();
+    let vm = init();
 
     // push two numbers on the stack
     {
@@ -69,7 +69,7 @@ fn main() {
         let stack_handle = scope.from_global(&vm.stack);
         let stack = stack_handle.as_mut::<Stack>().unwrap();
 
-        num_add(&mut vm, &stack.values[..], &mut stack.pending_result).ok();
+        num_add(&vm, &stack.values[..], &mut stack.pending_result).ok();
 
         stack.values.truncate(0);
         stack.values.push(stack.pending_result.take());
@@ -93,7 +93,7 @@ fn main() {
         let stack_handle = scope.from_global(&vm.stack);
         let stack = stack_handle.as_mut::<Stack>().unwrap();
 
-        num_is_nan(&mut vm, &stack.values[..], &mut stack.pending_result).ok();
+        num_is_nan(&vm, &stack.values[..], &mut stack.pending_result).ok();
 
         stack.values.truncate(0);
         stack.values.push(stack.pending_result.take());

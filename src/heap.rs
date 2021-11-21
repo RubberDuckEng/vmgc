@@ -13,11 +13,23 @@ struct WeakCell {
     ptr: TaggedPtr,
 }
 
-#[derive(Default)]
 struct HeapInner {
+    // TODO: Add more generations.
+    space: Space,
     globals: Vec<Option<HeapHandle>>,
     scopes: Vec<Vec<HeapHandle>>,
     object_cells: Vec<Option<WeakCell>>,
+}
+
+impl HeapInner {
+    fn new(space: Space) -> HeapInner {
+        HeapInner {
+            space,
+            globals: vec![],
+            scopes: vec![],
+            object_cells: vec![],
+        }
+    }
 }
 
 impl std::fmt::Debug for HeapInner {
@@ -28,8 +40,6 @@ impl std::fmt::Debug for HeapInner {
 
 #[derive(Debug)]
 pub struct Heap {
-    // TODO: Add more generations.
-    space: Space,
     inner: Arc<RefCell<HeapInner>>,
 }
 
@@ -37,17 +47,16 @@ impl Heap {
     pub fn new(size: usize) -> Result<Heap, GCError> {
         let half_size = size / 2;
         Ok(Heap {
-            space: Space::new(half_size)?,
-            inner: Arc::new(RefCell::new(HeapInner::default())),
+            inner: Arc::new(RefCell::new(HeapInner::new(Space::new(half_size)?))),
         })
     }
 
     pub fn used(&self) -> usize {
-        self.space.used()
+        self.inner.borrow().space.used()
     }
 
-    pub fn collect(&mut self) -> Result<(), GCError> {
-        let mut visitor = ObjectVisitor::new(Space::new(self.space.size)?);
+    pub fn collect(&self) -> Result<(), GCError> {
+        let mut visitor = ObjectVisitor::new(Space::new(self.inner.borrow().space.size)?);
         {
             let mut inner = self.inner.borrow_mut();
             visitor.trace_maybe_handles(&mut inner.globals);
@@ -85,15 +94,15 @@ impl Heap {
             inner.object_cells[i] = None;
         }
 
-        std::mem::swap(&mut self.space, &mut visitor.space);
+        std::mem::swap(&mut inner.space, &mut visitor.space);
         Ok(())
     }
 
-    fn emplace<T: HostObject>(&mut self, mut object: Box<T>) -> Result<ObjectPtr, GCError> {
+    fn emplace<T: HostObject>(&self, mut object: Box<T>) -> Result<ObjectPtr, GCError> {
         let object_size = std::mem::size_of::<TraceableObject>();
-        let header = ObjectHeader::new(&mut self.space, object_size, T::TYPE_ID)?;
-        let object_ptr = header.as_ptr().to_object_ptr();
         let mut inner = self.inner.borrow_mut();
+        let header = ObjectHeader::new(&mut inner.space, object_size, T::TYPE_ID)?;
+        let object_ptr = header.as_ptr().to_object_ptr();
         TraceableObject::new(object.as_mut()).store(object_ptr);
         inner.object_cells.push(Some(WeakCell {
             _value: object,
@@ -103,7 +112,7 @@ impl Heap {
     }
 
     pub fn allocate<'a, T: HostObject>(
-        &mut self,
+        &self,
         scope: &'a HandleScope,
     ) -> Result<LocalHandle<'a>, GCError> {
         let object_ptr = self.emplace(Box::new(T::default()))?;
@@ -111,7 +120,7 @@ impl Heap {
     }
 
     pub fn take<'a, T: HostObject>(
-        &mut self,
+        &self,
         scope: &'a HandleScope,
         object: T,
     ) -> Result<LocalHandle<'a>, GCError> {
@@ -142,20 +151,17 @@ impl Drop for GlobalHandle {
 }
 
 // FIXME: Hold a ref to the heap.
-pub struct HandleScope {
-    inner: Arc<RefCell<HeapInner>>,
+pub struct HandleScope<'a> {
+    heap: &'a Heap,
     index: usize,
 }
 
-impl HandleScope {
+impl<'a> HandleScope<'a> {
     pub fn new(heap: &Heap) -> HandleScope {
         let mut inner = heap.inner.borrow_mut();
         let index = inner.scopes.len();
         inner.scopes.push(vec![]);
-        HandleScope {
-            inner: Arc::clone(&heap.inner),
-            index,
-        }
+        HandleScope { heap, index }
     }
 
     pub fn create_num(&self, value: f64) -> LocalHandle {
@@ -167,7 +173,7 @@ impl HandleScope {
     }
 
     fn add(&self, ptr: TaggedPtr) -> usize {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.heap.inner.borrow_mut();
         let cells = &mut inner.scopes[self.index];
         let index = cells.len();
         cells.push(HeapHandle::new(ptr));
@@ -183,21 +189,21 @@ impl HandleScope {
     }
 
     fn get_ptr(&self, index: usize) -> TaggedPtr {
-        let inner = self.inner.borrow();
+        let inner = self.heap.inner.borrow();
         inner.scopes[self.index][index].ptr()
     }
 }
 
-impl Drop for HandleScope {
+impl<'a> Drop for HandleScope<'a> {
     fn drop(&mut self) {
-        let mut inner = self.inner.borrow_mut();
+        let mut inner = self.heap.inner.borrow_mut();
         inner.scopes.pop();
     }
 }
 
 #[derive(Copy, Clone)]
 pub struct LocalHandle<'a> {
-    scope: &'a HandleScope,
+    scope: &'a HandleScope<'a>,
     index: usize,
 }
 
@@ -217,13 +223,13 @@ impl<'a> LocalHandle<'a> {
         let ptr = self.ptr();
         let index = {
             // TODO: Scan for available cells.
-            let mut inner = self.scope.inner.borrow_mut();
+            let mut inner = self.scope.heap.inner.borrow_mut();
             let index = inner.globals.len();
             inner.globals.push(Some(HeapHandle::new(ptr)));
             index
         };
         GlobalHandle {
-            inner: Arc::clone(&self.scope.inner),
+            inner: Arc::clone(&self.scope.heap.inner),
             index,
         }
     }
@@ -309,7 +315,7 @@ mod tests {
 
     #[test]
     pub fn smoke_test() {
-        let mut heap = Heap::new(1000).unwrap();
+        let heap = Heap::new(1000).unwrap();
         assert_eq!(heap.used(), 0);
         let two = {
             let scope = HandleScope::new(&heap);
@@ -330,7 +336,7 @@ mod tests {
 
     #[test]
     fn finalizer_test() {
-        let mut heap = Heap::new(1000).unwrap();
+        let heap = Heap::new(1000).unwrap();
         let counter = Rc::new(Cell::new(0));
         let scope = HandleScope::new(&heap);
 
@@ -346,7 +352,7 @@ mod tests {
 
     #[test]
     fn tracing_test() {
-        let mut heap = Heap::new(1000).unwrap();
+        let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
         let handle = heap.allocate::<List>(&scope).unwrap();
 
@@ -407,7 +413,7 @@ mod tests {
 
     #[test]
     fn list_push_test() {
-        let mut heap = Heap::new(1000).unwrap();
+        let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
         let list = heap.allocate::<List>(&scope).unwrap();
         let one = scope.create_num(1.0);
@@ -421,7 +427,7 @@ mod tests {
 
     #[test]
     fn string_test() {
-        let mut heap = Heap::new(1000).unwrap();
+        let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
         let string_handle = heap.allocate::<String>(&scope).unwrap();
         heap.collect().ok();
@@ -431,7 +437,7 @@ mod tests {
 
     #[test]
     fn take_string_test() {
-        let mut heap = Heap::new(1000).unwrap();
+        let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
         let string_handle = heap.take(&scope, "Foo".to_string()).unwrap();
         heap.collect().ok();
@@ -441,7 +447,7 @@ mod tests {
 
     #[test]
     fn list_push_string_twice_test() {
-        let mut heap = Heap::new(1000).unwrap();
+        let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
         let list = heap.allocate::<List>(&scope).unwrap();
         let string = heap.take(&scope, "Foo".to_string()).unwrap();
@@ -478,7 +484,7 @@ mod tests {
 
     #[test]
     fn map_insert_test() {
-        let mut heap = Heap::new(1000).unwrap();
+        let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
         let map = heap.allocate::<Map>(&scope).unwrap();
         let foo = heap.take(&scope, "Foo".to_string()).unwrap();
