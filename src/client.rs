@@ -244,7 +244,7 @@ mod tests {
     fn map_insert_test() {
         let mut heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
-        let map = heap.allocate::<List>(&scope).unwrap();
+        let map = heap.allocate::<Map>(&scope).unwrap();
         let foo = heap.take(&scope, "Foo".to_string()).unwrap();
         let bar = heap.take(&scope, "Bar".to_string()).unwrap();
         let map_value = map.as_mut::<Map>().unwrap();
