@@ -89,11 +89,7 @@ impl Heap {
         Ok(())
     }
 
-    fn allocate_object<T: HostObject>(&mut self) -> Result<ObjectPtr, GCError> {
-        self.take_object(Box::new(T::default()))
-    }
-
-    fn take_object<T: HostObject>(&mut self, mut object: Box<T>) -> Result<ObjectPtr, GCError> {
+    fn emplace<T: HostObject>(&mut self, mut object: Box<T>) -> Result<ObjectPtr, GCError> {
         let object_size = std::mem::size_of::<TraceableObject>();
         let header = ObjectHeader::new(&mut self.space, object_size, T::TYPE_ID)?;
         let object_ptr = header.as_ptr().to_object_ptr();
@@ -106,13 +102,11 @@ impl Heap {
         Ok(object_ptr)
     }
 
-    // This allocates a space of size_of(T), but does not take a T, so T
-    // must be a heap-only type as it will never be finalized.
     pub fn allocate<'a, T: HostObject>(
         &mut self,
         scope: &'a HandleScope,
     ) -> Result<LocalHandle<'a>, GCError> {
-        let object_ptr = self.allocate_object::<T>()?;
+        let object_ptr = self.emplace(Box::new(T::default()))?;
         Ok(LocalHandle::new(scope, object_ptr.into()))
     }
 
@@ -121,24 +115,8 @@ impl Heap {
         scope: &'a HandleScope,
         object: T,
     ) -> Result<LocalHandle<'a>, GCError> {
-        self.take_box(scope, Box::new(object))
-    }
-
-    pub fn take_box<'a, T: HostObject>(
-        &mut self,
-        scope: &'a HandleScope,
-        object: Box<T>,
-    ) -> Result<LocalHandle<'a>, GCError> {
-        let object_ptr = self.take_object(object)?;
+        let object_ptr = self.emplace(Box::new(object))?;
         Ok(LocalHandle::new(scope, object_ptr.into()))
-    }
-
-    pub fn allocate_heap<T: HostObject>(&mut self) -> Result<HeapHandle, GCError> {
-        Ok(HeapHandle::new(self.allocate_object::<T>()?.into()))
-    }
-
-    pub fn allocate_num_heap(&mut self, value: f64) -> HeapHandle {
-        HeapHandle::new(value.into())
     }
 }
 
