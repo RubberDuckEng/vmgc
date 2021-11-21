@@ -1,5 +1,4 @@
 use std::cell::RefCell;
-use std::convert::AsMut;
 use std::convert::TryInto;
 use std::sync::Arc;
 
@@ -8,17 +7,12 @@ use crate::pointer::*;
 use crate::space::*;
 use crate::types::*;
 
-struct WeakCell {
-    _value: Box<dyn Traceable>,
-    ptr: TaggedPtr,
-}
-
 struct HeapInner {
     // TODO: Add more generations.
     space: Space,
-    globals: Vec<Option<HeapHandle>>,
     scopes: Vec<Vec<HeapHandle>>,
-    object_cells: Vec<Option<WeakCell>>,
+    globals: Vec<Option<HeapHandle>>,
+    weaks: Vec<HeapHandle>,
 }
 
 impl HeapInner {
@@ -27,8 +21,41 @@ impl HeapInner {
             space,
             globals: vec![],
             scopes: vec![],
-            object_cells: vec![],
+            weaks: vec![],
         }
+    }
+
+    fn trace(&mut self, visitor: &mut ObjectVisitor) {
+        visitor.trace_maybe_handles(&mut self.globals);
+        for scope in self.scopes.iter_mut() {
+            // FIXME:  Scope should be an object, not a vec here.
+            visitor.trace_handles(scope);
+        }
+
+        while let Some(object_ptr) = visitor.queue.pop_front() {
+            let object = TraceableObject::load(object_ptr);
+            let traceable = object.as_traceable();
+            traceable.trace(visitor);
+        }
+    }
+
+    fn update_weak(&mut self) -> Vec<Box<dyn Traceable>> {
+        let mut doomed = vec![];
+        let mut survivors = vec![];
+        for handle in self.weaks.iter() {
+            let maybe_object_ptr: Option<ObjectPtr> = handle.ptr().try_into().ok();
+            if let Some(object_ptr) = maybe_object_ptr {
+                let old_header = object_ptr.header();
+                if let Some(new_header_ptr) = old_header.new_header_ptr {
+                    survivors.push(HeapHandle::new(new_header_ptr.to_object_ptr().into()));
+                } else {
+                    let object = TraceableObject::load(object_ptr);
+                    doomed.push(object.into_box());
+                }
+            }
+        }
+        std::mem::swap(&mut self.weaks, &mut survivors);
+        doomed
     }
 }
 
@@ -56,58 +83,25 @@ impl Heap {
     }
 
     pub fn collect(&self) -> Result<(), GCError> {
-        let mut visitor = ObjectVisitor::new(Space::new(self.inner.borrow().space.size)?);
-        {
+        let doomed = {
+            let mut visitor = ObjectVisitor::new(Space::new(self.inner.borrow().space.size)?);
             let mut inner = self.inner.borrow_mut();
-            visitor.trace_maybe_handles(&mut inner.globals);
-            for scope in inner.scopes.iter_mut() {
-                // FIXME:  Scope should be an object, not a vec here.
-                visitor.trace_handles(scope);
-            }
-        }
-
-        while let Some(object_ptr) = visitor.queue.pop_front() {
-            let object = TraceableObject::load(object_ptr);
-            let traceable = object.as_traceable();
-            traceable.trace(&mut visitor);
-        }
-
-        let mut indicies_to_finalize = vec![];
-
-        let mut inner = self.inner.borrow_mut();
-        for (i, maybe_cell) in inner.object_cells.iter_mut().enumerate() {
-            if let Some(cell) = maybe_cell {
-                if let Some(old_header) = cell.ptr.header() {
-                    if let Some(new_header_ptr) = old_header.new_header_ptr {
-                        cell.ptr = new_header_ptr.to_object_ptr().into();
-                    } else {
-                        // Finalize later in a less vulnerable place.
-                        indicies_to_finalize.push(i);
-                    }
-                }
-            }
-        }
-        // FIXME: Move finalization somewhere less vulnerable to avoid dropping
-        // host objects calling back into GC code while we're collecting.
-        // Should have a re-entrancy guard against host callbacks.
-        for i in indicies_to_finalize {
-            inner.object_cells[i] = None;
-        }
-
-        std::mem::swap(&mut inner.space, &mut visitor.space);
+            inner.trace(&mut visitor);
+            let doomed = inner.update_weak();
+            std::mem::swap(&mut inner.space, &mut visitor.space);
+            doomed
+        };
+        std::mem::drop(doomed);
         Ok(())
     }
 
-    fn emplace<T: HostObject>(&self, mut object: Box<T>) -> Result<ObjectPtr, GCError> {
+    fn emplace<T: HostObject>(&self, object: Box<T>) -> Result<ObjectPtr, GCError> {
         let object_size = std::mem::size_of::<TraceableObject>();
         let mut inner = self.inner.borrow_mut();
         let header = ObjectHeader::new(&mut inner.space, object_size, T::TYPE_ID)?;
         let object_ptr = header.as_ptr().to_object_ptr();
-        TraceableObject::new(object.as_mut()).store(object_ptr);
-        inner.object_cells.push(Some(WeakCell {
-            _value: object,
-            ptr: object_ptr.into(),
-        }));
+        TraceableObject::new(object).store(object_ptr);
+        inner.weaks.push(HeapHandle::new(object_ptr.into()));
         Ok(object_ptr)
     }
 }

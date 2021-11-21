@@ -147,10 +147,14 @@ pub struct TraceableObject {
 }
 
 impl TraceableObject {
-    pub fn new(traceable: &mut dyn Traceable) -> TraceableObject {
+    pub fn new(traceable: Box<dyn Traceable>) -> TraceableObject {
         TraceableObject {
-            ptr: traceable as *mut dyn Traceable,
+            ptr: Box::into_raw(traceable),
         }
+    }
+
+    pub fn into_box(self) -> Box<dyn Traceable> {
+        unsafe { Box::from_raw(self.ptr) }
     }
 
     pub fn store(&self, object_ptr: ObjectPtr) {
