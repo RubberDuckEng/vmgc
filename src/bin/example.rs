@@ -7,14 +7,21 @@ use vmgc::types::GCError;
 // Holds the heap and the stack.
 struct VM {
     heap: Heap,
-    stack: GlobalHandle,
+    stack: GlobalHandle<Stack>,
 }
 
 #[derive(Default)]
 struct Stack {
-    pending_result: HeapHandle,
-    values: Vec<HeapHandle>,
+    pending_result: HeapHandle<()>,
+    values: Vec<HeapHandle<()>>,
 }
+
+// type DynamicHeapHandle = HeapHandle<()>;
+
+// struct TypedHandle<HandleType, ValueType> {
+//     handle: HandleType,
+//     _phantom: PhantomData<ValueType>,
+// }
 
 impl HostObject for Stack {
     const TYPE_ID: ObjectType = ObjectType::Host;
@@ -36,14 +43,14 @@ fn init() -> VM {
     VM { stack, heap }
 }
 
-fn num_add(_vm: &VM, args: &[HeapHandle], out: &mut HeapHandle) -> Result<(), GCError> {
+fn num_add(_vm: &VM, args: &[HeapHandle<()>], out: &mut HeapHandle<()>) -> Result<(), GCError> {
     let lhs: f64 = args[0].ptr().try_into()?;
     let rhs: f64 = args[1].ptr().try_into()?;
     out.set_ptr((lhs + rhs).into());
     Ok(())
 }
 
-fn num_is_nan(_vm: &VM, args: &[HeapHandle], out: &mut HeapHandle) -> Result<(), GCError> {
+fn num_is_nan(_vm: &VM, args: &[HeapHandle<()>], out: &mut HeapHandle<()>) -> Result<(), GCError> {
     let num: f64 = args[0].ptr().try_into()?;
     out.set_ptr(num.is_nan().into());
     Ok(())
@@ -55,6 +62,7 @@ fn main() {
     // push two numbers on the stack
     {
         let scope = HandleScope::new(&vm.heap);
+        // let stack: &mut Stack = scope.as_mut(&vm.stack);
         let stack_handle = scope.from_global(&vm.stack);
         let stack = stack_handle.as_mut::<Stack>().unwrap();
 

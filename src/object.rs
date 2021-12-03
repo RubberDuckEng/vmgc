@@ -2,6 +2,7 @@ use std::any::Any;
 use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
+use std::marker::PhantomData;
 
 use crate::pointer::*;
 use crate::space::*;
@@ -38,14 +39,14 @@ impl ObjectVisitor {
         object_ptr
     }
 
-    pub fn trace_handles(&mut self, handles: &Vec<HeapHandle>) {
+    pub fn trace_handles<T>(&mut self, handles: &Vec<HeapHandle<T>>) {
         for index in 0..handles.len() {
             let handle = &handles[index];
             handle.trace(self);
         }
     }
 
-    pub fn trace_maybe_handles(&mut self, handles: &Vec<Option<HeapHandle>>) {
+    pub fn trace_maybe_handles<T>(&mut self, handles: &Vec<Option<HeapHandle<T>>>) {
         for index in 0..handles.len() {
             if let Some(handle) = &handles[index] {
                 handle.trace(self);
@@ -55,28 +56,30 @@ impl ObjectVisitor {
 }
 #[derive(PartialEq, Eq)]
 #[repr(transparent)]
-pub struct HeapHandle {
+pub struct HeapHandle<T> {
     // Held in a Cell so that visit doesn't require mut self.
     // visit() is the ONLY place where ptr should ever change.
     ptr: Cell<TaggedPtr>,
+    _phantom: PhantomData<T>,
 }
 
-impl Default for HeapHandle {
+impl<T> Default for HeapHandle<T> {
     fn default() -> Self {
         HeapHandle::new(TaggedPtr::NULL)
     }
 }
 
-impl Hash for HeapHandle {
+impl<T> Hash for HeapHandle<T> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.ptr().hash(state);
     }
 }
 
-impl HeapHandle {
-    pub fn new(ptr: TaggedPtr) -> HeapHandle {
-        HeapHandle {
+impl<T> HeapHandle<T> {
+    pub fn new(ptr: TaggedPtr) -> Self {
+        Self {
             ptr: Cell::new(ptr),
+            _phantom: PhantomData::<T>::default(),
         }
     }
 
@@ -96,10 +99,17 @@ impl HeapHandle {
         self.ptr.set(ptr);
     }
 
-    pub fn take(&mut self) -> HeapHandle {
-        let result = HeapHandle::new(self.ptr());
+    pub fn take(&mut self) -> Self {
+        let result = Self::new(self.ptr());
         self.set_ptr(TaggedPtr::default());
         result
+    }
+
+    pub fn erase_type(&self) -> HeapHandle<()> {
+        HeapHandle {
+            ptr: self.ptr.clone(),
+            _phantom: PhantomData::<()>::default(),
+        }
     }
 }
 
@@ -210,7 +220,7 @@ impl Traceable for String {
     }
 }
 
-pub type Map = HashMap<HeapHandle, HeapHandle>;
+pub type Map = HashMap<HeapHandle<()>, HeapHandle<()>>;
 
 impl HostObject for Map {
     const TYPE_ID: ObjectType = ObjectType::Host;
@@ -227,7 +237,7 @@ impl Traceable for Map {
 
 #[derive(Default, Hash)]
 pub struct List {
-    pub values: Vec<HeapHandle>,
+    pub values: Vec<HeapHandle<()>>,
 }
 
 impl HostObject for List {

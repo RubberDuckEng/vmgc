@@ -30,19 +30,20 @@ Inspired in part by https://rust-hosted-langs.github.io/book/introduction.html
     }
     pub(crate) fn new(
         vm: &VM,
-        closure: Handle<ObjClosure>,
+        scope: &'a HandleScope,
+        closure: LocalHandle<'_, ObjClosure>,
         run_source: FiberRunSource,
-    ) -> ObjFiber {
+    ) -> LocalHandle<'a, ObjFiber> {
     }
 * Example of saving a handle passed into you, or copying and returning a new handle.
 * Example of returning some type of handle?
-    pub(crate) fn variable_by_name(&self, name: &str) -> Option<Value> {
+    pub(crate) fn variable_by_name(&self, scope: &'a HandleScope, name: &str) -> LocalHandle<'a> {
         self.lookup_symbol(name)
             .map(|index| self.variables[index as usize].clone())
     }
-    fn as_try_return_value(&self) -> Value {
+    fn as_try_return_value(&self, scope: &'a HandleScope) -> LocalHandle<'a> {
         match self {
-            VMError::Error(string) => Value::from_str(string),
-            VMError::FiberAbort(value) => value.clone(),
+            VMError::Error(string) => scope.from_str(string),
+            VMError::FiberAbort(value) => scope.from_heap(value),
         }
     }

@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::convert::TryInto;
+use std::marker::PhantomData;
 use std::sync::Arc;
 
 use crate::object::*;
@@ -10,9 +11,9 @@ use crate::types::*;
 struct HeapInner {
     // TODO: Add more generations.
     space: Space,
-    scopes: Vec<Vec<HeapHandle>>,
-    globals: Vec<Option<HeapHandle>>,
-    weaks: Vec<HeapHandle>,
+    scopes: Vec<Vec<HeapHandle<()>>>,
+    globals: Vec<Option<HeapHandle<()>>>,
+    weaks: Vec<HeapHandle<()>>,
 }
 
 impl HeapInner {
@@ -106,22 +107,34 @@ impl Heap {
     }
 }
 
-// Rename as Root
 #[derive(Debug)]
-pub struct GlobalHandle {
+struct Root {
     inner: Arc<RefCell<HeapInner>>,
     index: usize,
 }
 
-impl GlobalHandle {
+#[derive(Debug)]
+pub struct GlobalHandle<T> {
+    root: Root,
+    _phantom: PhantomData<T>,
+}
+
+impl<T> GlobalHandle<T> {
     fn ptr(&self) -> TaggedPtr {
-        let inner = self.inner.borrow();
-        let cell = inner.globals[self.index].as_ref().unwrap();
+        let inner = self.root.inner.borrow();
+        let cell = inner.globals[self.root.index].as_ref().unwrap();
         cell.ptr()
+    }
+
+    pub fn erase_type(self) -> GlobalHandle<()> {
+        GlobalHandle {
+            root: self.root,
+            _phantom: PhantomData::<()>::default(),
+        }
     }
 }
 
-impl Drop for GlobalHandle {
+impl Drop for Root {
     fn drop(&mut self) {
         self.inner.borrow_mut().globals[self.index] = None;
     }
@@ -140,22 +153,23 @@ impl<'a> HandleScope<'a> {
         HandleScope { heap, index }
     }
 
-    pub fn create_num(&self, value: f64) -> LocalHandle {
-        LocalHandle::new(self, value.into())
+    pub fn create_num(&self, value: f64) -> LocalHandle<f64> {
+        LocalHandle::<f64>::new(self, value.into())
     }
 
-    pub fn create_null(&self) -> LocalHandle {
-        LocalHandle::new(self, TaggedPtr::NULL)
+    // TODO: What type should null be?
+    pub fn create_null(&self) -> LocalHandle<()> {
+        LocalHandle::<()>::new(self, TaggedPtr::NULL)
     }
 
-    pub fn create<T: HostObject>(&self) -> Result<LocalHandle, GCError> {
+    pub fn create<T: HostObject>(&self) -> Result<LocalHandle<T>, GCError> {
         let object_ptr = self.heap.emplace(Box::new(T::default()))?;
-        Ok(LocalHandle::new(self, object_ptr.into()))
+        Ok(LocalHandle::<T>::new(self, object_ptr.into()))
     }
 
-    pub fn take<T: HostObject>(&self, object: T) -> Result<LocalHandle, GCError> {
+    pub fn take<T: HostObject>(&self, object: T) -> Result<LocalHandle<T>, GCError> {
         let object_ptr = self.heap.emplace(Box::new(object))?;
-        Ok(LocalHandle::new(self, object_ptr.into()))
+        Ok(LocalHandle::<T>::new(self, object_ptr.into()))
     }
 
     fn add(&self, ptr: TaggedPtr) -> usize {
@@ -166,12 +180,12 @@ impl<'a> HandleScope<'a> {
         index
     }
 
-    pub fn from_global(&self, handle: &GlobalHandle) -> LocalHandle {
-        LocalHandle::new(self, handle.ptr())
+    pub fn from_global<T>(&self, handle: &GlobalHandle<T>) -> LocalHandle<T> {
+        LocalHandle::<T>::new(self, handle.ptr())
     }
 
-    pub fn from_heap(&self, handle: &HeapHandle) -> LocalHandle {
-        LocalHandle::new(self, handle.ptr())
+    pub fn from_heap<T>(&self, handle: &HeapHandle<T>) -> LocalHandle<T> {
+        LocalHandle::<T>::new(self, handle.ptr())
     }
 
     fn get_ptr(&self, index: usize) -> TaggedPtr {
@@ -188,16 +202,18 @@ impl<'a> Drop for HandleScope<'a> {
 }
 
 #[derive(Copy, Clone)]
-pub struct LocalHandle<'a> {
+pub struct LocalHandle<'a, T> {
     scope: &'a HandleScope<'a>,
     index: usize,
+    phantom: PhantomData<T>,
 }
 
-impl<'a> LocalHandle<'a> {
-    fn new(scope: &'a HandleScope, ptr: TaggedPtr) -> LocalHandle<'a> {
-        LocalHandle {
+impl<'a, T> LocalHandle<'a, T> {
+    fn new(scope: &'a HandleScope, ptr: TaggedPtr) -> Self {
+        Self {
             scope: scope,
             index: scope.add(ptr),
+            phantom: PhantomData::<T>::default(),
         }
     }
 
@@ -209,59 +225,71 @@ impl<'a> LocalHandle<'a> {
         self.ptr().try_into().ok()
     }
 
-    pub fn as_ref<T: HostObject>(&self) -> Option<&T> {
+    pub fn as_ref<S: HostObject>(&self) -> Option<&S> {
         if let Some(object_ptr) = self.get_object_ptr() {
             // FIXME: Add ObjectPtr::is_type
-            if object_ptr.header().object_type != T::TYPE_ID {
+            if object_ptr.header().object_type != S::TYPE_ID {
                 return None;
             }
-            let ptr = TraceableObject::downcast::<T>(object_ptr);
+            let ptr = TraceableObject::downcast::<S>(object_ptr);
             Some(unsafe { &*ptr })
         } else {
             None
         }
     }
 
-    pub fn as_mut<T: HostObject>(&self) -> Option<&mut T> {
+    pub fn as_mut<S: HostObject>(&self) -> Option<&mut S> {
         if let Some(object_ptr) = self.get_object_ptr() {
             // FIXME: Add ObjectPtr::is_type
-            if object_ptr.header().object_type != T::TYPE_ID {
+            if object_ptr.header().object_type != S::TYPE_ID {
                 return None;
             }
-            let ptr = TraceableObject::downcast_mut::<T>(object_ptr);
+            let ptr = TraceableObject::downcast_mut::<S>(object_ptr);
             Some(unsafe { &mut *ptr })
         } else {
             None
         }
     }
+
+    pub fn erase_type(&self) -> LocalHandle<()> {
+        LocalHandle {
+            scope: self.scope,
+            index: self.index,
+            phantom: PhantomData::<()>::default(),
+        }
+    }
 }
 
-impl<'a> TryInto<f64> for LocalHandle<'a> {
+// TODO: from should work without error for T=f64.
+impl<'a, T> TryInto<f64> for LocalHandle<'a, T> {
     type Error = GCError;
     fn try_into(self) -> Result<f64, GCError> {
         self.ptr().try_into()
     }
 }
 
-impl<'a> From<LocalHandle<'a>> for HeapHandle {
-    fn from(handle: LocalHandle<'a>) -> Self {
-        HeapHandle::new(handle.ptr())
+impl<'a, T> From<LocalHandle<'a, T>> for HeapHandle<T> {
+    fn from(handle: LocalHandle<'a, T>) -> Self {
+        HeapHandle::<T>::new(handle.ptr())
     }
 }
 
-impl<'a> From<LocalHandle<'a>> for GlobalHandle {
-    fn from(handle: LocalHandle<'a>) -> Self {
+impl<'a, T> From<LocalHandle<'a, T>> for GlobalHandle<T> {
+    fn from(handle: LocalHandle<'a, T>) -> Self {
         let ptr = handle.ptr();
         let index = {
             // TODO: Scan for available cells.
             let mut inner = handle.scope.heap.inner.borrow_mut();
             let index = inner.globals.len();
-            inner.globals.push(Some(HeapHandle::new(ptr)));
+            inner.globals.push(Some(HeapHandle::<()>::new(ptr)));
             index
         };
         GlobalHandle {
-            inner: Arc::clone(&handle.scope.heap.inner),
-            index,
+            root: Root {
+                inner: Arc::clone(&handle.scope.heap.inner),
+                index,
+            },
+            _phantom: PhantomData::<T>::default(),
         }
     }
 }
@@ -305,7 +333,7 @@ mod tests {
     pub fn smoke_test() {
         let heap = Heap::new(1000).unwrap();
         assert_eq!(heap.used(), 0);
-        let two: GlobalHandle = {
+        let two: GlobalHandle<DropObject> = {
             let scope = HandleScope::new(&heap);
             let one = scope.create::<DropObject>().unwrap();
             let two = scope.create::<DropObject>().unwrap();
@@ -346,11 +374,11 @@ mod tests {
 
         let list = handle.as_mut::<List>().unwrap();
         list.values
-            .push(scope.create::<DropObject>().unwrap().into());
+            .push(scope.create::<DropObject>().unwrap().erase_type().into());
         list.values
-            .push(scope.create::<DropObject>().unwrap().into());
+            .push(scope.create::<DropObject>().unwrap().erase_type().into());
         list.values
-            .push(scope.create::<DropObject>().unwrap().into());
+            .push(scope.create::<DropObject>().unwrap().erase_type().into());
         std::mem::drop(list);
 
         let used = heap.used();
@@ -406,7 +434,7 @@ mod tests {
         let list = scope.create::<List>().unwrap();
         let one = scope.create_num(1.0);
         let list_value = list.as_mut::<List>().unwrap();
-        list_value.values.push(one.into());
+        list_value.values.push(one.erase_type().into());
         std::mem::drop(list_value);
         heap.collect().ok();
         let list_value = list.as_mut::<List>().unwrap();
@@ -440,8 +468,8 @@ mod tests {
         let list = scope.create::<List>().unwrap();
         let string = scope.take("Foo".to_string()).unwrap();
         let list_value = list.as_mut::<List>().unwrap();
-        list_value.values.push(string.into());
-        list_value.values.push(string.into());
+        list_value.values.push(string.erase_type().into());
+        list_value.values.push(string.erase_type().into());
         std::mem::drop(list_value);
         heap.collect().ok();
         let list_value = list.as_mut::<List>().unwrap();
@@ -478,7 +506,7 @@ mod tests {
         let foo = scope.take("Foo".to_string()).unwrap();
         let bar = scope.take("Bar".to_string()).unwrap();
         let map_value = map.as_mut::<Map>().unwrap();
-        map_value.insert(foo.into(), bar.into());
+        map_value.insert(foo.erase_type().into(), bar.erase_type().into());
         std::mem::drop(map_value);
         std::mem::drop(foo);
         std::mem::drop(bar);
@@ -487,7 +515,7 @@ mod tests {
         {
             let map_value = map.as_mut::<Map>().unwrap();
             let foo = scope.take("Foo".to_string()).unwrap();
-            let bar = scope.from_heap(map_value.get(&foo.into()).unwrap());
+            let bar = scope.from_heap(map_value.get(&foo.erase_type().into()).unwrap());
             assert_eq!(bar.as_ref::<String>().unwrap(), "Bar");
         }
 
@@ -495,7 +523,25 @@ mod tests {
 
         let map_value = map.as_mut::<Map>().unwrap();
         let foo = scope.take("Foo".to_string()).unwrap();
-        let bar = scope.from_heap(map_value.get(&foo.into()).unwrap());
+        let bar = scope.from_heap(map_value.get(&foo.erase_type().into()).unwrap());
         assert_eq!(bar.as_ref::<String>().unwrap(), "Bar");
+    }
+
+    #[test]
+    fn typed_handle_test() {
+        let heap = Heap::new(1000).unwrap();
+        let scope = HandleScope::new(&heap);
+
+        // let foo_string: String = "Foo".to_string();
+        // let foo: LocalHandle<String> = scope.take(foo_string).unwrap();
+
+        let string: LocalHandle<String> = scope.take("Foo".to_string()).unwrap();
+        // create a String
+        // store it in a typed handle for String.
+        // get it back out.
+
+        // create a String
+        // try to store it in the wrong type'd handle
+        // see it panic.
     }
 }
