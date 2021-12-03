@@ -13,7 +13,7 @@ struct VM {
 #[derive(Default)]
 struct Stack {
     pending_result: HeapHandle<()>,
-    values: Vec<HeapHandle<()>>,
+    values: List,
 }
 
 // type DynamicHeapHandle = HeapHandle<()>;
@@ -29,7 +29,7 @@ impl HostObject for Stack {
 
 impl Traceable for Stack {
     fn trace(&mut self, visitor: &mut ObjectVisitor) {
-        visitor.trace_handles(&self.values);
+        self.values.trace(visitor);
         self.pending_result.trace(visitor);
     }
 }
@@ -63,8 +63,8 @@ fn main() {
     {
         let scope = HandleScope::new(&vm.heap);
         let stack = scope.as_mut(&vm.stack);
-        stack.values.push(HeapHandle::new(1.0.into()));
-        stack.values.push(HeapHandle::new(2.0.into()));
+        stack.values.push_ptr(1.0.into());
+        stack.values.push_ptr(2.0.into());
     }
     vm.heap.collect().ok();
 

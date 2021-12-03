@@ -556,6 +556,7 @@ mod tests {
         // let foo: LocalHandle<String> = scope.take(foo_string).unwrap();
 
         let string: LocalHandle<String> = scope.take("Foo".to_string()).unwrap();
+        assert_eq!(string.as_ref(), "Foo");
         // create a String
         // store it in a typed handle for String.
         // get it back out.

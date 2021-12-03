@@ -249,3 +249,26 @@ impl Traceable for List {
         visitor.trace_handles(&self.values);
     }
 }
+
+impl List {
+    pub fn push<T>(&mut self, handle: HeapHandle<T>) {
+        self.values.push(handle.erase_type());
+    }
+
+    pub fn push_ptr(&mut self, ptr: TaggedPtr) {
+        self.values.push(HeapHandle::new(ptr));
+    }
+
+    pub fn truncate(&mut self, len: usize) {
+        self.values.truncate(len);
+    }
+}
+
+impl<I: std::slice::SliceIndex<[HeapHandle<()>]>> std::ops::Index<I> for List {
+    type Output = I::Output;
+
+    #[inline]
+    fn index(&self, index: I) -> &Self::Output {
+        std::ops::Index::index(&self.values, index)
+    }
+}
