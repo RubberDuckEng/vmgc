@@ -162,7 +162,7 @@ impl<'a> HandleScope<'a> {
         LocalHandle::<()>::new(self, TaggedPtr::NULL)
     }
 
-    pub fn create<T: HostObject>(&self) -> Result<LocalHandle<T>, GCError> {
+    pub fn create<T: HostObject + Default>(&self) -> Result<LocalHandle<T>, GCError> {
         let object_ptr = self.heap.emplace(Box::new(T::default()))?;
         Ok(LocalHandle::<T>::new(self, object_ptr.into()))
     }

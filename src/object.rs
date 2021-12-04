@@ -195,7 +195,7 @@ impl TraceableObject {
 
 // We will eventually add a HeapObject as an optimization
 // for things which don't hold pointers out to rust objects.
-pub trait HostObject: Traceable + Default {
+pub trait HostObject: Traceable {
     const TYPE_ID: ObjectType;
 }
 
