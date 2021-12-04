@@ -19,31 +19,11 @@ Inspired in part by https://rust-hosted-langs.github.io/book/introduction.html
 * Collect on allocation
 
 # Blocking for wren integration
-* Example of passing LocalHandle
-    fn emit_constant(ctx: &mut ParseContext, value: LocalHandle) -> Result<(), WrenError> {
-        let index = ensure_constant(ctx, value)?;
-        emit(ctx, Ops::Constant(index));
-        Ok(())
-    }
-    fn store_this(&self, frame: &CallFrame, value: LocalHandle) {
-        self.store_local(frame, 0, value)
-    }
-    pub(crate) fn new(
-        vm: &VM,
-        scope: &'a HandleScope,
-        closure: LocalHandle<'_, ObjClosure>,
-        run_source: FiberRunSource,
-    ) -> LocalHandle<'a, ObjFiber> {
-    }
-* Example of saving a handle passed into you, or copying and returning a new handle.
-* Example of returning some type of handle?
-    pub(crate) fn variable_by_name(&self, scope: &'a HandleScope, name: &str) -> LocalHandle<'a> {
-        self.lookup_symbol(name)
-            .map(|index| self.variables[index as usize].clone())
-    }
-    fn as_try_return_value(&self, scope: &'a HandleScope) -> LocalHandle<'a> {
-        match self {
-            VMError::Error(string) => scope.from_str(string),
-            VMError::FiberAbort(value) => scope.from_heap(value),
-        }
+* Typesafe List and Map classes
+* Starting List from a passed in vec?  Or filling from nulls?
+* Example of free-standing Null?  (Passing around scope to make null seems silly.)
+* Example of matching on Handle type
+* Example of try_into from LocalHandle<()> to LocalHandle<T>
+    if let Value::Fn(fn_obj) = const_value {
+        fn_objs.push(fn_obj.clone());
     }

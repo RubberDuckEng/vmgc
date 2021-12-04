@@ -552,9 +552,6 @@ mod tests {
         let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
 
-        // let foo_string: String = "Foo".to_string();
-        // let foo: LocalHandle<String> = scope.take(foo_string).unwrap();
-
         let string: LocalHandle<String> = scope.take("Foo".to_string()).unwrap();
         assert_eq!(string.as_ref(), "Foo");
         // create a String
