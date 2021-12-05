@@ -17,6 +17,7 @@ Inspired in part by https://rust-hosted-langs.github.io/book/introduction.html
 * Consider making a HandleScope like AutoReleasePool?
 * Consider having a NonNullHandle type?
 * Collect on allocation
+* Give examples/docs to make clear which Handle types are nullable vs. not.
 
 # Blocking for wren integration
 * Typesafe List and Map classes
@@ -27,3 +28,4 @@ Inspired in part by https://rust-hosted-langs.github.io/book/introduction.html
     if let Value::Fn(fn_obj) = const_value {
         fn_objs.push(fn_obj.clone());
     }
+* Explore if FooHandle<Option<T>> could be null or T or if we need to use Option<FooHandle<T>>.
