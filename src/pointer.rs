@@ -155,10 +155,16 @@ impl PartialEq for TaggedPtr {
             return false;
         }
         if self.is_ptr() {
-            let lhs_ptr = self.clone().try_into().unwrap();
-            let rhs_ptr = rhs.clone().try_into().unwrap();
-            let lhs_object = TraceableObject::load(lhs_ptr);
-            lhs_object.as_traceable().object_eq(lhs_ptr, rhs_ptr)
+            let lhs_ptr: ObjectPtr = self.clone().try_into().unwrap();
+            let rhs_ptr: ObjectPtr = rhs.clone().try_into().unwrap();
+            let lhs_type = lhs_ptr.header().object_type;
+            let rhs_type = rhs_ptr.header().object_type;
+            match (lhs_type, rhs_type) {
+                (ObjectType::Host, ObjectType::Host) => {
+                    let lhs_object = TraceableObject::load(lhs_ptr);
+                    lhs_object.as_traceable().object_eq(lhs_ptr, rhs_ptr)
+                }
+            }
         } else {
             unsafe { self.bits == rhs.bits }
         }
@@ -170,9 +176,13 @@ impl Eq for TaggedPtr {}
 impl Hash for TaggedPtr {
     fn hash<H: Hasher>(&self, state: &mut H) {
         if self.is_ptr() {
-            let ptr = self.clone().try_into().unwrap();
-            let object = TraceableObject::load(ptr);
-            object.as_traceable().object_hash(ptr).hash(state);
+            let ptr: ObjectPtr = self.clone().try_into().unwrap();
+            match ptr.header().object_type {
+                ObjectType::Host => {
+                    let object = TraceableObject::load(ptr);
+                    object.as_traceable().object_hash(ptr).hash(state);
+                }
+            }
         } else {
             unsafe { self.bits.hash(state) }
         }
@@ -186,7 +196,9 @@ impl Hash for TaggedPtr {
 pub struct ObjectPtr(*mut u8);
 
 impl ObjectPtr {
-    // Note: addr is assumed to point to a TraceableObject.
+    /// ObjectPtr is a pointer into the Heap.  They assume there is a
+    /// corresponding HeaderPtr laid out directly befor them in the Heap.
+    /// Heap::emplace is a simple way to get one.
     fn new(addr: *mut u8) -> ObjectPtr {
         ObjectPtr(addr)
     }
@@ -226,10 +238,10 @@ impl HeaderPtr {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Clone, Copy)]
 #[repr(u16)]
 pub enum ObjectType {
-    Host,
+    Host, // FIXME: Means uses the class TraceableObject, names should match.
 }
 
 #[derive(Debug)]

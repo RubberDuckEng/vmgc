@@ -172,12 +172,16 @@ impl TraceableObject {
     }
 
     pub fn store(&self, object_ptr: ObjectPtr) {
+        // FIXME: Express this precondition in the type system?
+        assert!(object_ptr.header().object_type == ObjectType::Host);
         unsafe {
             *(object_ptr.addr() as *mut *mut dyn Traceable) = self.ptr;
         }
     }
 
     pub fn load(object_ptr: ObjectPtr) -> TraceableObject {
+        // FIXME: Express this precondition in the type system?
+        assert!(object_ptr.header().object_type == ObjectType::Host);
         let traceable_ptr = unsafe { *(object_ptr.addr() as *mut *mut dyn Traceable) };
         TraceableObject { ptr: traceable_ptr }
     }
@@ -187,6 +191,8 @@ impl TraceableObject {
     }
 
     pub fn try_downcast<T: 'static>(object_ptr: ObjectPtr) -> Option<*const T> {
+        // FIXME: Express this precondition in the type system?
+        assert!(object_ptr.header().object_type == ObjectType::Host);
         let traceable_ptr = unsafe { *(object_ptr.addr() as *const *const dyn Traceable) };
         let traceable_ref = unsafe { &(*traceable_ptr) };
         traceable_ref
