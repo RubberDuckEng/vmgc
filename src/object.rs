@@ -96,13 +96,8 @@ impl<T> HeapHandle<T> {
     // This intentionally takes &mut self and has normal mutation
     // rules, only visit() should use _ptr.set().
     pub fn set_ptr(&mut self, ptr: TaggedPtr) {
+        // FIXME: Danger, this could change the type T including to null!
         self.ptr.set(ptr);
-    }
-
-    pub fn take(&mut self) -> Self {
-        let result = Self::new(self.ptr());
-        self.set_ptr(TaggedPtr::default());
-        result
     }
 
     pub fn erase_type(&self) -> HeapHandle<()> {
@@ -110,6 +105,15 @@ impl<T> HeapHandle<T> {
             ptr: self.ptr.clone(),
             _phantom: PhantomData::<()>::default(),
         }
+    }
+}
+
+impl HeapHandle<()> {
+    // It's not safe to assign null to HeapHandle<T>
+    pub fn take(&mut self) -> Self {
+        let result = Self::new(self.ptr());
+        self.set_ptr(TaggedPtr::default());
+        result
     }
 }
 
@@ -182,12 +186,23 @@ impl TraceableObject {
         unsafe { &mut (*self.ptr) }
     }
 
-    pub fn downcast<T: 'static>(object_ptr: ObjectPtr) -> *const T {
+    pub fn try_downcast<T: 'static>(object_ptr: ObjectPtr) -> Option<*const T> {
         let traceable_ptr = unsafe { *(object_ptr.addr() as *const *const dyn Traceable) };
         let traceable_ref = unsafe { &(*traceable_ptr) };
-        traceable_ref.as_any().downcast_ref().unwrap() as *const T
+        traceable_ref
+            .as_any()
+            .downcast_ref()
+            .map(|t_ref| t_ref as *const T)
     }
 
+    /// This will panic (in unwrap) if the ObjectPtr does not point to a
+    /// HostObject of type T.
+    pub fn downcast<T: 'static>(object_ptr: ObjectPtr) -> *const T {
+        Self::try_downcast(object_ptr).unwrap()
+    }
+
+    /// This will panic (in unwrap) if the ObjectPtr does not point to a
+    /// HostObject of type T.
     pub fn downcast_mut<T: 'static>(object_ptr: ObjectPtr) -> *mut T {
         Self::downcast::<T>(object_ptr) as *mut T
     }
@@ -213,10 +228,13 @@ impl Traceable for String {
     }
 
     fn object_eq(&self, _lhs: ObjectPtr, rhs_object_ptr: ObjectPtr) -> bool {
-        // FIXME: This depends on the caller having passed the correct ObjectPtr
-        let rhs_ptr = TraceableObject::downcast::<String>(rhs_object_ptr);
-        let rhs = unsafe { &*rhs_ptr };
-        self.eq(rhs)
+        // FIXME: This still assumes ObjectPtr is an object!
+        let maybe_rhs_ptr = TraceableObject::try_downcast::<String>(rhs_object_ptr);
+        if let Some(rhs_ptr) = maybe_rhs_ptr {
+            let rhs = unsafe { &*rhs_ptr };
+            return self.eq(rhs);
+        }
+        false
     }
 }
 

@@ -45,7 +45,7 @@ impl TaggedPtr {
     };
 
     // It's a number if it's not NaN.
-    fn is_num(&self) -> bool {
+    pub fn is_num(&self) -> bool {
         unsafe { (self.bits & QUIET_NAN_MASK) != QUIET_NAN_MASK }
     }
 
@@ -62,8 +62,7 @@ impl TaggedPtr {
         unsafe { self.bits == TaggedPtr::FALSE.bits }
     }
 
-    #[cfg(test)]
-    fn is_null(&self) -> bool {
+    pub fn is_null(&self) -> bool {
         unsafe { self.bits == TaggedPtr::NULL.bits }
     }
 
@@ -202,6 +201,10 @@ impl ObjectPtr {
     pub fn header(&self) -> &mut ObjectHeader {
         ObjectHeader::from_object_ptr(*self)
     }
+
+    pub fn is_type(&self, expected: ObjectType) -> bool {
+        self.header().object_type == expected
+    }
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -305,5 +308,33 @@ mod tests {
         let ptr: ObjectPtr = tagged.try_into().unwrap();
         let boxed = unsafe { Box::from_raw(ptr.addr()) };
         assert_eq!(*boxed, 1);
+    }
+
+    #[test]
+    pub fn eq_test() {
+        assert_eq!(TaggedPtr::TRUE, TaggedPtr::TRUE);
+        assert_ne!(TaggedPtr::TRUE, TaggedPtr::FALSE);
+        assert_ne!(TaggedPtr::NULL, TaggedPtr::FALSE);
+        let zero: TaggedPtr = 0.0.into();
+        assert_ne!(TaggedPtr::NULL, zero);
+        assert_ne!(TaggedPtr::FALSE, zero);
+
+        // FIXME: This crashes?  Maybe T needs to be Tracable?
+        // If so, what part of the type-system is failing here?
+        // fn tagged_from_object<T>(value: T) -> TaggedPtr {
+        //     let boxed = Box::new(value);
+        //     let raw_ptr = Box::into_raw(boxed) as *mut u8;
+        //     TaggedPtr::from(ObjectPtr::new(raw_ptr))
+        // }
+
+        // let one = tagged_from_object(1);
+        // let also_one = tagged_from_object(1);
+        // let two = tagged_from_object(2);
+        // let object_true = tagged_from_object(true);
+        // assert_eq!(one, one);
+        // assert_eq!(one, also_one);
+        // assert_ne!(one, two);
+        // assert_ne!(one, object_true);
+        // assert_ne!(TaggedPtr::TRUE, object_true);
     }
 }

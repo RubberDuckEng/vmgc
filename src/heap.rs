@@ -157,6 +157,10 @@ impl<'a> HandleScope<'a> {
         LocalHandle::<f64>::new(self, value.into())
     }
 
+    pub fn create_bool(&self, value: bool) -> LocalHandle<bool> {
+        LocalHandle::<bool>::new(self, value.into())
+    }
+
     // TODO: What type should null be?
     pub fn create_null(&self) -> LocalHandle<()> {
         LocalHandle::<()>::new(self, TaggedPtr::NULL)
@@ -227,6 +231,11 @@ impl<'a, T> LocalHandle<'a, T> {
         }
     }
 
+    #[cfg(test)]
+    fn is_null(&self) -> bool {
+        self.ptr().is_null()
+    }
+
     fn ptr(&self) -> TaggedPtr {
         self.scope.get_ptr(self.index)
     }
@@ -237,36 +246,50 @@ impl<'a, T> LocalHandle<'a, T> {
 
     pub fn try_as_ref<S: HostObject>(&self) -> Option<&'a S> {
         if let Some(object_ptr) = self.get_object_ptr() {
-            // FIXME: Add ObjectPtr::is_type
-            if object_ptr.header().object_type != S::TYPE_ID {
-                return None;
+            if object_ptr.is_type(S::TYPE_ID) {
+                let ptr = TraceableObject::downcast::<S>(object_ptr);
+                return Some(unsafe { &*ptr });
             }
-            let ptr = TraceableObject::downcast::<S>(object_ptr);
-            Some(unsafe { &*ptr })
-        } else {
-            None
         }
+        None
     }
 
     pub fn try_as_mut<S: HostObject>(&self) -> Option<&'a mut S> {
         if let Some(object_ptr) = self.get_object_ptr() {
-            // FIXME: Add ObjectPtr::is_type
-            if object_ptr.header().object_type != S::TYPE_ID {
-                return None;
+            if object_ptr.is_type(S::TYPE_ID) {
+                let ptr = TraceableObject::downcast_mut::<S>(object_ptr);
+                return Some(unsafe { &mut *ptr });
             }
-            let ptr = TraceableObject::downcast_mut::<S>(object_ptr);
-            Some(unsafe { &mut *ptr })
-        } else {
-            None
         }
+        None
     }
 
+    // FIXME: The lifetimes seem wrong here?
+    // scope.create_bool(true).erase_type() says dropped while borrowed.
     pub fn erase_type(&self) -> LocalHandle<()> {
         LocalHandle {
             scope: self.scope,
             index: self.index,
             phantom: PhantomData::<()>::default(),
         }
+    }
+}
+
+impl<'a> LocalHandle<'a, ()> {
+    pub fn try_downcast<T: HostObject>(&self) -> Option<LocalHandle<T>> {
+        if let Some(object_ptr) = self.get_object_ptr() {
+            if object_ptr.is_type(T::TYPE_ID) {
+                let ptr = TraceableObject::try_downcast::<T>(object_ptr);
+                if ptr.is_some() {
+                    return Some(LocalHandle {
+                        scope: self.scope,
+                        index: self.index,
+                        phantom: PhantomData::<T>::default(),
+                    });
+                }
+            }
+        }
+        None
     }
 }
 
@@ -281,10 +304,17 @@ impl<'a, T: HostObject> LocalHandle<'a, T> {
 }
 
 // TODO: from should work without error for T=f64.
+// https://users.rust-lang.org/t/how-to-exclude-a-type-from-generic-trait-implementation/26156/7
 impl<'a, T> TryInto<f64> for LocalHandle<'a, T> {
     type Error = GCError;
     fn try_into(self) -> Result<f64, GCError> {
         self.ptr().try_into()
+    }
+}
+
+impl<'a> Into<bool> for LocalHandle<'a, bool> {
+    fn into(self) -> bool {
+        self.ptr().try_into().unwrap()
     }
 }
 
@@ -552,14 +582,76 @@ mod tests {
         let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
 
+        // Bools
+        let boolean: LocalHandle<bool> = scope.create_bool(true);
+        let out: bool = boolean.into();
+        assert_eq!(out, true);
+        // bool.as_ref() can't work.
+        // bool.as_mut() similarly so.
+
+        // Nums
+        let num: LocalHandle<f64> = scope.create_num(1.0);
+        let out: f64 = num.try_into().unwrap();
+        assert_eq!(out, 1.0);
+        // num.as_ref() should be possible.
+        // num.as_mut() might be possible?
+
+        // Null
+        let null: LocalHandle<()> = scope.create_null();
+        assert_eq!(null.is_null(), true);
+
+        // HostObjects (e.g. String)
         let string: LocalHandle<String> = scope.take("Foo".to_string()).unwrap();
         assert_eq!(string.as_ref(), "Foo");
-        // create a String
-        // store it in a typed handle for String.
-        // get it back out.
+
+        // Untyped handles
+        let untyped = num.erase_type();
+        let out: f64 = untyped.try_into().unwrap();
+        assert_eq!(out, 1.0);
 
         // create a String
         // try to store it in the wrong type'd handle
         // see it panic.
+
+        // Things to test:
+        // Combinations of types (null, f64 (valid and NaN), HostObject, bool)
+        // - Getting refs to all types
+        // - Geting (and changing?) a mut-ref to num, bool, null types?
+        // - value cast to the wrong type
+        // - handle cast to the wrong type
+        // - Using try_downcast and getting back None with the wrong type.
+    }
+
+    #[test]
+    fn downcast_to_typed_handle_test() {
+        let heap = Heap::new(1000).unwrap();
+        let scope = HandleScope::new(&heap);
+
+        // // Bools
+        let boolean = scope.create_bool(true);
+        let untyped: LocalHandle<()> = boolean.erase_type();
+        assert!(untyped.try_downcast::<String>().is_none());
+        // assert!(untyped.try_downcast::<bool>().is_some());
+        // assert!(untyped.try_downcast::<f64>().is_none());
+
+        // // Nums
+        let num = scope.create_num(1.0);
+        let untyped: LocalHandle<()> = num.erase_type();
+        assert!(untyped.try_downcast::<String>().is_none());
+        // assert!(untyped.try_downcast::<bool>().is_none());
+        // assert!(untyped.try_downcast::<f64>().is_some());
+
+        // // Null
+        let untyped: LocalHandle<()> = scope.create_null();
+        assert!(untyped.try_downcast::<String>().is_none());
+        // assert!(untyped.try_downcast::<bool>().is_none());
+        // assert!(untyped.try_downcast::<f64>().is_none());
+
+        // HostObjects (e.g. String)
+        let typed = scope.take("Foo".to_string()).unwrap();
+        let untyped: LocalHandle<()> = typed.erase_type();
+        assert!(untyped.try_downcast::<String>().is_some());
+        // assert!(untyped.try_downcast::<bool>().is_none());
+        // assert!(untyped.try_downcast::<f64>().is_none());
     }
 }
