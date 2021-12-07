@@ -101,7 +101,7 @@ impl Heap {
         let mut inner = self.inner.borrow_mut();
         let header = ObjectHeader::new(&mut inner.space, object_size, T::TYPE_ID)?;
         let object_ptr = header.as_ptr().to_object_ptr();
-        TraceableObject::new(object).store(object_ptr);
+        TraceableObject::from_box(object).store(object_ptr);
         inner.weaks.push(HeapHandle::new(object_ptr.into()));
         Ok(object_ptr)
     }
@@ -264,9 +264,7 @@ impl<'a, T> LocalHandle<'a, T> {
         None
     }
 
-    // FIXME: The lifetimes seem wrong here?
-    // scope.create_bool(true).erase_type() says dropped while borrowed.
-    pub fn erase_type(&self) -> LocalHandle<()> {
+    pub fn erase_type(&self) -> LocalHandle<'a, ()> {
         LocalHandle {
             scope: self.scope,
             index: self.index,
@@ -276,7 +274,7 @@ impl<'a, T> LocalHandle<'a, T> {
 }
 
 impl<'a> LocalHandle<'a, ()> {
-    pub fn try_downcast<T: HostObject>(&self) -> Option<LocalHandle<T>> {
+    pub fn try_downcast<T: HostObject>(&self) -> Option<LocalHandle<'a, T>> {
         if let Some(object_ptr) = self.get_object_ptr() {
             if object_ptr.is_type(T::TYPE_ID) {
                 let ptr = TraceableObject::try_downcast::<T>(object_ptr);
@@ -628,15 +626,13 @@ mod tests {
         let scope = HandleScope::new(&heap);
 
         // // Bools
-        let boolean = scope.create_bool(true);
-        let untyped: LocalHandle<()> = boolean.erase_type();
+        let untyped: LocalHandle<()> = scope.create_bool(true).erase_type();
         assert!(untyped.try_downcast::<String>().is_none());
         // assert!(untyped.try_downcast::<bool>().is_some());
         // assert!(untyped.try_downcast::<f64>().is_none());
 
         // // Nums
-        let num = scope.create_num(1.0);
-        let untyped: LocalHandle<()> = num.erase_type();
+        let untyped: LocalHandle<()> = scope.create_num(1.0).erase_type();
         assert!(untyped.try_downcast::<String>().is_none());
         // assert!(untyped.try_downcast::<bool>().is_none());
         // assert!(untyped.try_downcast::<f64>().is_some());
@@ -648,8 +644,7 @@ mod tests {
         // assert!(untyped.try_downcast::<f64>().is_none());
 
         // HostObjects (e.g. String)
-        let typed = scope.take("Foo".to_string()).unwrap();
-        let untyped: LocalHandle<()> = typed.erase_type();
+        let untyped: LocalHandle<()> = scope.take("Foo".to_string()).unwrap().erase_type();
         assert!(untyped.try_downcast::<String>().is_some());
         // assert!(untyped.try_downcast::<bool>().is_none());
         // assert!(untyped.try_downcast::<f64>().is_none());

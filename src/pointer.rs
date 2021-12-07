@@ -186,6 +186,7 @@ impl Hash for TaggedPtr {
 pub struct ObjectPtr(*mut u8);
 
 impl ObjectPtr {
+    // Note: addr is assumed to point to a TraceableObject.
     fn new(addr: *mut u8) -> ObjectPtr {
         ObjectPtr(addr)
     }
@@ -302,6 +303,8 @@ mod tests {
 
         // Try round-tripping a pointer as well.
         let boxed = Box::new(1);
+        // This is technically unsafe use of ObjectPtr::new() as
+        // ObjectPtr::eq assumes any ptr() is a TraceableObject.
         let ptr = ObjectPtr::new(Box::into_raw(boxed));
         let tagged = TaggedPtr::from(ptr);
         assert_eq!(bool::try_from(tagged).ok(), None);

@@ -161,7 +161,7 @@ pub struct TraceableObject {
 }
 
 impl TraceableObject {
-    pub fn new(traceable: Box<dyn Traceable>) -> TraceableObject {
+    pub fn from_box(traceable: Box<dyn Traceable>) -> TraceableObject {
         TraceableObject {
             ptr: Box::into_raw(traceable),
         }
