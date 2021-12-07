@@ -29,3 +29,5 @@ Inspired in part by https://rust-hosted-langs.github.io/book/introduction.html
         fn_objs.push(fn_obj.clone());
     }
 * Explore if FooHandle<Option<T>> could be null or T or if we need to use Option<FooHandle<T>>.
+* Plan for try_into_num or try_into_foo, how to add such outside of this crate.
+* Plan for unified type for matching against LocalHandle types.
