@@ -290,6 +290,32 @@ impl ObjectHeader {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::heap::*;
+    use crate::object::*;
+
+    // A bit hacky to make u32 traceable, but seems convienent for a test.
+    impl HostObject for u32 {
+        const TYPE_ID: ObjectType = ObjectType::Host;
+    }
+
+    impl Traceable for u32 {
+        fn trace(&mut self, _visitor: &mut ObjectVisitor) {}
+
+        fn object_hash(&self, _ptr: ObjectPtr) -> u64 {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            self.hash(&mut hasher);
+            hasher.finish()
+        }
+
+        fn object_eq(&self, _lhs: ObjectPtr, rhs_object_ptr: ObjectPtr) -> bool {
+            let maybe_rhs_ptr = TraceableObject::try_downcast::<Self>(rhs_object_ptr);
+            if let Some(rhs_ptr) = maybe_rhs_ptr {
+                let rhs = unsafe { &*rhs_ptr };
+                return self.eq(rhs);
+            }
+            false
+        }
+    }
 
     #[test]
     pub fn size_test() {
@@ -313,16 +339,11 @@ mod tests {
         assert_eq!(bool::try_from(TaggedPtr::TRUE).unwrap(), true);
         assert_eq!(bool::try_from(TaggedPtr::NULL).ok(), None);
 
-        // Try round-tripping a pointer as well.
-        let boxed = Box::new(1);
-        // This is technically unsafe use of ObjectPtr::new() as
-        // ObjectPtr::eq assumes any ptr() is a TraceableObject.
-        let ptr = ObjectPtr::new(Box::into_raw(boxed));
-        let tagged = TaggedPtr::from(ptr);
+        let heap = Heap::new(1000).unwrap();
+        let scope = HandleScope::new(&heap);
+        let one = scope.take(1).unwrap();
+        let tagged = one.ptr_for_test();
         assert_eq!(bool::try_from(tagged).ok(), None);
-        let ptr: ObjectPtr = tagged.try_into().unwrap();
-        let boxed = unsafe { Box::from_raw(ptr.addr()) };
-        assert_eq!(*boxed, 1);
     }
 
     #[test]
@@ -334,22 +355,19 @@ mod tests {
         assert_ne!(TaggedPtr::NULL, zero);
         assert_ne!(TaggedPtr::FALSE, zero);
 
-        // FIXME: This crashes?  Maybe T needs to be Tracable?
-        // If so, what part of the type-system is failing here?
-        // fn tagged_from_object<T>(value: T) -> TaggedPtr {
-        //     let boxed = Box::new(value);
-        //     let raw_ptr = Box::into_raw(boxed) as *mut u8;
-        //     TaggedPtr::from(ObjectPtr::new(raw_ptr))
-        // }
+        let heap = Heap::new(1000).unwrap();
+        let scope = HandleScope::new(&heap);
 
-        // let one = tagged_from_object(1);
-        // let also_one = tagged_from_object(1);
-        // let two = tagged_from_object(2);
-        // let object_true = tagged_from_object(true);
-        // assert_eq!(one, one);
-        // assert_eq!(one, also_one);
-        // assert_ne!(one, two);
-        // assert_ne!(one, object_true);
-        // assert_ne!(TaggedPtr::TRUE, object_true);
+        fn make_tagged_ptr(scope: &HandleScope, value: u32) -> TaggedPtr {
+            let one = scope.take(value).unwrap();
+            one.ptr_for_test()
+        }
+
+        let one = make_tagged_ptr(&scope, 1);
+        let also_one = make_tagged_ptr(&scope, 1);
+        let two = make_tagged_ptr(&scope, 2);
+        assert_eq!(one, one);
+        assert_eq!(one, also_one);
+        assert_ne!(one, two);
     }
 }

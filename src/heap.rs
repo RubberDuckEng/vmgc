@@ -236,6 +236,11 @@ impl<'a, T> LocalHandle<'a, T> {
         self.ptr().is_null()
     }
 
+    #[cfg(test)]
+    pub(crate) fn ptr_for_test(&self) -> TaggedPtr {
+        self.ptr()
+    }
+
     fn ptr(&self) -> TaggedPtr {
         self.scope.get_ptr(self.index)
     }
