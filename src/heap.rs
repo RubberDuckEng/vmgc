@@ -423,15 +423,12 @@ mod tests {
     fn tracing_test() {
         let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
-        let handle = scope.create::<List>().unwrap();
+        let handle = scope.create::<List<DropObject>>().unwrap();
 
-        let list = handle.try_as_mut::<List>().unwrap();
-        list.values
-            .push(scope.create::<DropObject>().unwrap().erase_type().into());
-        list.values
-            .push(scope.create::<DropObject>().unwrap().erase_type().into());
-        list.values
-            .push(scope.create::<DropObject>().unwrap().erase_type().into());
+        let list = handle.try_as_mut::<List<DropObject>>().unwrap();
+        list.push(scope.create::<DropObject>().unwrap().into());
+        list.push(scope.create::<DropObject>().unwrap().into());
+        list.push(scope.create::<DropObject>().unwrap().into());
         std::mem::drop(list);
 
         let used = heap.used();
@@ -484,14 +481,14 @@ mod tests {
     fn list_push_test() {
         let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
-        let list = scope.create::<List>().unwrap();
+        let list = scope.create::<List<f64>>().unwrap();
         let one = scope.create_num(1.0);
-        let list_value = list.try_as_mut::<List>().unwrap();
-        list_value.values.push(one.erase_type().into());
+        let list_value = list.try_as_mut::<List<f64>>().unwrap();
+        list_value.push(one.into());
         std::mem::drop(list_value);
         heap.collect().ok();
-        let list_value = list.try_as_mut::<List>().unwrap();
-        assert_eq!(list_value.values.len(), 1);
+        let list_value = list.try_as_mut::<List<f64>>().unwrap();
+        assert_eq!(list_value.len(), 1);
     }
 
     #[test]
@@ -518,25 +515,25 @@ mod tests {
     fn list_push_string_twice_test() {
         let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
-        let list = scope.create::<List>().unwrap();
+        let list = scope.create::<List<String>>().unwrap();
         let string = scope.take("Foo".to_string()).unwrap();
-        let list_value = list.try_as_mut::<List>().unwrap();
-        list_value.values.push(string.erase_type().into());
-        list_value.values.push(string.erase_type().into());
+        let list_value = list.try_as_mut::<List<String>>().unwrap();
+        list_value.push(string.clone().into());
+        list_value.push(string.clone().into());
         std::mem::drop(list_value);
         heap.collect().ok();
-        let list_value = list.try_as_mut::<List>().unwrap();
-        assert_eq!(list_value.values.len(), 2);
+        let list_value = list.try_as_mut::<List<String>>().unwrap();
+        assert_eq!(list_value.len(), 2);
         assert_eq!(
             scope
-                .from_heap(&list_value.values[0])
+                .from_heap(&list_value[0])
                 .try_as_ref::<String>()
                 .unwrap(),
             "Foo"
         );
         assert_eq!(
             scope
-                .from_heap(&list_value.values[1])
+                .from_heap(&list_value[1])
                 .try_as_ref::<String>()
                 .unwrap(),
             "Foo"
@@ -544,7 +541,7 @@ mod tests {
         string.try_as_mut::<String>().unwrap().push_str("Bar");
         assert_eq!(
             scope
-                .from_heap(&list_value.values[0])
+                .from_heap(&list_value[0])
                 .try_as_ref::<String>()
                 .unwrap(),
             "FooBar"

@@ -260,43 +260,58 @@ impl Traceable for Map {
 }
 
 #[derive(Default, Hash)]
-pub struct List {
-    pub values: Vec<HeapHandle<()>>,
-}
+pub struct List<T>(Vec<HeapHandle<T>>);
 
-impl HostObject for List {
+impl<T: 'static> HostObject for List<T> {
     const TYPE_ID: ObjectType = ObjectType::Host;
 }
 
-impl Traceable for List {
+impl<T: 'static> Traceable for List<T> {
     fn trace(&mut self, visitor: &mut ObjectVisitor) {
-        visitor.trace_handles(&self.values);
+        visitor.trace_handles(&self.0);
     }
 }
 
-impl List {
-    pub fn push<T>(&mut self, handle: HeapHandle<T>) {
-        self.values.push(handle.erase_type());
+impl List<()> {
+    pub fn push<S>(&mut self, handle: HeapHandle<S>) {
+        self.push(handle.erase_type());
     }
+}
 
-    pub fn push_ptr(&mut self, ptr: TaggedPtr) {
-        self.values.push(HeapHandle::new(ptr));
+// FIXME: Use macros.
+impl List<bool> {
+    pub fn push(&mut self, handle: HeapHandle<bool>) {
+        self.0.push(handle);
     }
+}
 
+impl List<f64> {
+    pub fn push(&mut self, handle: HeapHandle<f64>) {
+        self.0.push(handle);
+    }
+}
+
+impl<T: HostObject> List<T> {
+    pub fn push(&mut self, handle: HeapHandle<T>) {
+        self.0.push(handle);
+    }
+}
+
+impl<T> List<T> {
     pub fn truncate(&mut self, len: usize) {
-        self.values.truncate(len);
+        self.0.truncate(len);
     }
 
     pub fn len(&self) -> usize {
-        self.values.len()
+        self.0.len()
     }
 }
 
-impl<I: std::slice::SliceIndex<[HeapHandle<()>]>> std::ops::Index<I> for List {
+impl<T, I: std::slice::SliceIndex<[HeapHandle<T>]>> std::ops::Index<I> for List<T> {
     type Output = I::Output;
 
     #[inline]
     fn index(&self, index: I) -> &Self::Output {
-        std::ops::Index::index(&self.values, index)
+        std::ops::Index::index(&self.0, index)
     }
 }

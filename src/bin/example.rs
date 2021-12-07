@@ -13,7 +13,7 @@ struct VM {
 #[derive(Default)]
 struct Stack {
     pending_result: HeapHandle<()>,
-    values: List,
+    values: List<()>,
 }
 
 // type DynamicHeapHandle = HeapHandle<()>;
@@ -63,8 +63,8 @@ fn main() {
     {
         let scope = HandleScope::new(&vm.heap);
         let stack = scope.as_mut(&vm.stack);
-        stack.values.push_ptr(1.0.into());
-        stack.values.push_ptr(2.0.into());
+        stack.values.push(scope.create_num(1.0).into());
+        stack.values.push(scope.create_num(2.0).into());
     }
     vm.heap.collect().ok();
 
