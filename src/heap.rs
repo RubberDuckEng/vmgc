@@ -221,11 +221,27 @@ impl<'a> Drop for HandleScope<'a> {
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy)]
 pub struct LocalHandle<'a, T> {
     scope: &'a HandleScope<'a>,
     index: usize,
     phantom: PhantomData<T>,
+}
+
+// Derive Clone requires T to be Cloneable, which isn't required for Handles.
+impl<'a, T> Clone for LocalHandle<'a, T> {
+    fn clone(&self) -> Self {
+        LocalHandle {
+            scope: self.scope,
+            index: self.index,
+            phantom: PhantomData::<T>::default(),
+        }
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.scope = source.scope;
+        self.index = source.index;
+    }
 }
 
 impl<'a, T> LocalHandle<'a, T> {

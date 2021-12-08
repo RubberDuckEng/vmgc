@@ -1,6 +1,7 @@
 use std::any::Any;
 use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
+use std::convert::TryInto;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 
@@ -55,7 +56,8 @@ impl ObjectVisitor {
         }
     }
 }
-#[derive(PartialEq, Eq)]
+
+#[derive(PartialEq, Eq, Debug)]
 #[repr(transparent)]
 pub struct HeapHandle<T> {
     // Held in a Cell so that visit doesn't require mut self.
@@ -116,6 +118,40 @@ impl HeapHandle<()> {
 
     pub fn is_num(&self) -> bool {
         self.ptr().is_num()
+    }
+}
+
+impl<T: HostObject> HeapHandle<T> {
+    fn get_object_ptr(&self) -> Option<ObjectPtr> {
+        self.ptr().try_into().ok()
+    }
+
+    pub fn try_as_ref<S: HostObject>(&self) -> Option<&S> {
+        if let Some(object_ptr) = self.get_object_ptr() {
+            if object_ptr.is_type(S::TYPE_ID) {
+                let ptr = TraceableObject::downcast::<S>(object_ptr);
+                return Some(unsafe { &*ptr });
+            }
+        }
+        None
+    }
+
+    pub fn try_as_mut<S: HostObject>(&self) -> Option<&mut S> {
+        if let Some(object_ptr) = self.get_object_ptr() {
+            if object_ptr.is_type(S::TYPE_ID) {
+                let ptr = TraceableObject::downcast_mut::<S>(object_ptr);
+                return Some(unsafe { &mut *ptr });
+            }
+        }
+        None
+    }
+
+    pub fn as_ref(&self) -> &T {
+        self.try_as_ref().unwrap()
+    }
+
+    pub fn as_mut(&self) -> &mut T {
+        self.try_as_mut().unwrap()
     }
 }
 
@@ -261,8 +297,14 @@ impl<K: 'static, V: 'static> Traceable for Map<K, V> {
     }
 }
 
-#[derive(Default, Hash)]
+#[derive(Hash)]
 pub struct List<T>(Vec<HeapHandle<T>>);
+
+impl<T> Default for List<T> {
+    fn default() -> Self {
+        List(vec![])
+    }
+}
 
 impl<T: 'static> HostObject for List<T> {
     const TYPE_ID: ObjectType = ObjectType::Host;
@@ -300,7 +342,7 @@ impl<T: HostObject> List<T> {
 }
 
 impl<T> List<T> {
-    pub fn pop<'a>(&mut self, scope: &'a HandleScope<'a>) -> Option<LocalHandle<'a, T>> {
+    pub fn pop<'a>(&mut self, scope: &'a HandleScope) -> Option<LocalHandle<'a, T>> {
         self.0.pop().map(|handle| scope.from_heap(&handle))
     }
 
@@ -323,6 +365,19 @@ impl<T> List<T> {
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
+
+    pub fn iter(&self) -> std::slice::Iter<'_, HeapHandle<T>> {
+        self.0.iter()
+    }
+}
+
+impl<'a, T> IntoIterator for &'a List<T> {
+    type Item = &'a HeapHandle<T>;
+    type IntoIter = std::slice::Iter<'a, HeapHandle<T>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        (&self.0).into_iter()
+    }
 }
 
 impl<T, I: std::slice::SliceIndex<[HeapHandle<T>]>> std::ops::Index<I> for List<T> {
@@ -331,5 +386,11 @@ impl<T, I: std::slice::SliceIndex<[HeapHandle<T>]>> std::ops::Index<I> for List<
     #[inline]
     fn index(&self, index: I) -> &Self::Output {
         std::ops::Index::index(&self.0, index)
+    }
+}
+
+impl<'a, T> From<Vec<LocalHandle<'a, T>>> for List<T> {
+    fn from(elements: Vec<LocalHandle<'a, T>>) -> Self {
+        List(elements.iter().map(|local| local.clone().into()).collect())
     }
 }
