@@ -46,13 +46,13 @@ fn init() -> VM {
 fn num_add(_vm: &VM, args: &[HeapHandle<()>], out: &mut HeapHandle<()>) -> Result<(), GCError> {
     let lhs: f64 = args[0].ptr().try_into()?;
     let rhs: f64 = args[1].ptr().try_into()?;
-    out.set_ptr((lhs + rhs).into());
+    *out = HeapHandle::new((lhs + rhs).into());
     Ok(())
 }
 
 fn num_is_nan(_vm: &VM, args: &[HeapHandle<()>], out: &mut HeapHandle<()>) -> Result<(), GCError> {
     let num: f64 = args[0].ptr().try_into()?;
-    out.set_ptr(num.is_nan().into());
+    *out = HeapHandle::new(num.is_nan().into());
     Ok(())
 }
 

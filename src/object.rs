@@ -94,13 +94,6 @@ impl<T> HeapHandle<T> {
         }
     }
 
-    // This intentionally takes &mut self and has normal mutation
-    // rules, only visit() should use _ptr.set().
-    pub fn set_ptr(&mut self, ptr: TaggedPtr) {
-        // FIXME: Danger, this could change the type T including to null!
-        self.ptr.set(ptr);
-    }
-
     pub fn erase_type(&self) -> HeapHandle<()> {
         HeapHandle {
             ptr: self.ptr.clone(),
@@ -113,7 +106,7 @@ impl HeapHandle<()> {
     // It's not safe to assign null to HeapHandle<T>
     pub fn take(&mut self) -> Self {
         let result = Self::new(self.ptr());
-        self.set_ptr(TaggedPtr::default());
+        self.ptr.set(TaggedPtr::default());
         result
     }
 

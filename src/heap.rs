@@ -283,8 +283,14 @@ impl<'a> LocalHandle<'a, ()> {
     pub fn is_null(&self) -> bool {
         self.ptr().is_null()
     }
+}
 
-    pub fn try_downcast<T: HostObject>(&self) -> Option<LocalHandle<'a, T>> {
+pub trait DowncastTo<T> {
+    fn try_downcast(self) -> Option<T>;
+}
+
+impl<'a, T: HostObject> DowncastTo<LocalHandle<'a, T>> for LocalHandle<'a, ()> {
+    fn try_downcast(self) -> Option<LocalHandle<'a, T>> {
         if let Some(object_ptr) = self.get_object_ptr() {
             if object_ptr.is_type(T::TYPE_ID) {
                 let ptr = TraceableObject::try_downcast::<T>(object_ptr);
@@ -301,6 +307,22 @@ impl<'a> LocalHandle<'a, ()> {
     }
 }
 
+impl<'a> DowncastTo<LocalHandle<'a, f64>> for LocalHandle<'a, ()> {
+    fn try_downcast(self) -> Option<LocalHandle<'a, f64>> {
+        self.try_into()
+            .ok()
+            .map(|value| self.scope.create_num(value))
+    }
+}
+
+impl<'a> DowncastTo<LocalHandle<'a, bool>> for LocalHandle<'a, ()> {
+    fn try_downcast(self) -> Option<LocalHandle<'a, bool>> {
+        self.try_into()
+            .ok()
+            .map(|value| self.scope.create_bool(value))
+    }
+}
+
 impl<'a, T: HostObject> LocalHandle<'a, T> {
     pub fn as_ref(&self) -> &'a T {
         self.try_as_ref().unwrap()
@@ -311,11 +333,22 @@ impl<'a, T: HostObject> LocalHandle<'a, T> {
     }
 }
 
-// TODO: from should work without error for T=f64.
-// https://users.rust-lang.org/t/how-to-exclude-a-type-from-generic-trait-implementation/26156/7
-impl<'a, T> TryInto<f64> for LocalHandle<'a, T> {
+impl<'a> TryInto<f64> for LocalHandle<'a, ()> {
     type Error = GCError;
     fn try_into(self) -> Result<f64, GCError> {
+        self.ptr().try_into()
+    }
+}
+
+impl<'a> Into<f64> for LocalHandle<'a, f64> {
+    fn into(self) -> f64 {
+        self.ptr().try_into().unwrap()
+    }
+}
+
+impl<'a> TryInto<bool> for LocalHandle<'a, ()> {
+    type Error = GCError;
+    fn try_into(self) -> Result<bool, GCError> {
         self.ptr().try_into()
     }
 }
@@ -634,25 +667,29 @@ mod tests {
 
         // // Bools
         let untyped: LocalHandle<()> = scope.create_bool(true).erase_type();
-        assert!(untyped.try_downcast::<String>().is_none());
+        let typed: Option<LocalHandle<String>> = untyped.try_downcast();
+        assert!(typed.is_none());
         // assert!(untyped.try_downcast::<bool>().is_some());
         // assert!(untyped.try_downcast::<f64>().is_none());
 
         // // Nums
         let untyped: LocalHandle<()> = scope.create_num(1.0).erase_type();
-        assert!(untyped.try_downcast::<String>().is_none());
+        let typed: Option<LocalHandle<String>> = untyped.try_downcast();
+        assert!(typed.is_none());
         // assert!(untyped.try_downcast::<bool>().is_none());
         // assert!(untyped.try_downcast::<f64>().is_some());
 
         // // Null
         let untyped: LocalHandle<()> = scope.create_null();
-        assert!(untyped.try_downcast::<String>().is_none());
+        let typed: Option<LocalHandle<String>> = untyped.try_downcast();
+        assert!(typed.is_none());
         // assert!(untyped.try_downcast::<bool>().is_none());
         // assert!(untyped.try_downcast::<f64>().is_none());
 
         // HostObjects (e.g. String)
         let untyped: LocalHandle<()> = scope.take("Foo".to_string()).unwrap().erase_type();
-        assert!(untyped.try_downcast::<String>().is_some());
+        let typed: Option<LocalHandle<String>> = untyped.try_downcast();
+        assert!(typed.is_some());
         // assert!(untyped.try_downcast::<bool>().is_none());
         // assert!(untyped.try_downcast::<f64>().is_none());
     }
