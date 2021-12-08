@@ -29,5 +29,18 @@ Inspired in part by https://rust-hosted-langs.github.io/book/introduction.html
         fn_objs.push(fn_obj.clone());
     }
 * Explore if FooHandle<Option<T>> could be null or T or if we need to use Option<FooHandle<T>>.
-* Plan for try_into_num or try_into_foo, how to add such outside of this crate.
+* Plan for try_into_num or try_into_foo, how to add such outside of this crate.  try_downcast<f64> dooesn't seem possible to define with try_downcast<T: HostObject> also defined.
 * Plan for unified type for matching against LocalHandle types.
+* Guidance on the prefered order of LocalHandle vs &LocalHandle vs &HeapHandle as passing types.
+*     pub fn push<S>(&mut self, handle: HeapHandle<S>) , should be &HeapHandle right?
+* How do we allocate a List and then set it on a rust struct?  Is that even safe? e.g.
+struct VM {
+    stack: List<()>,
+}
+fn foo() -> VM {
+    let list = scope.create<List>().unwrap();
+    list.add_stuff();
+    VM {
+        stack: list,?
+    }
+}

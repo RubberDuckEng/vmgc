@@ -134,6 +134,12 @@ impl<T> GlobalHandle<T> {
     }
 }
 
+impl<T> From<GlobalHandle<T>> for HeapHandle<T> {
+    fn from(handle: GlobalHandle<T>) -> Self {
+        HeapHandle::<T>::new(handle.ptr())
+    }
+}
+
 impl Drop for Root {
     fn drop(&mut self) {
         self.inner.borrow_mut().globals[self.index] = None;
@@ -232,11 +238,6 @@ impl<'a, T> LocalHandle<'a, T> {
     }
 
     #[cfg(test)]
-    fn is_null(&self) -> bool {
-        self.ptr().is_null()
-    }
-
-    #[cfg(test)]
     pub(crate) fn ptr_for_test(&self) -> TaggedPtr {
         self.ptr()
     }
@@ -279,6 +280,10 @@ impl<'a, T> LocalHandle<'a, T> {
 }
 
 impl<'a> LocalHandle<'a, ()> {
+    pub fn is_null(&self) -> bool {
+        self.ptr().is_null()
+    }
+
     pub fn try_downcast<T: HostObject>(&self) -> Option<LocalHandle<'a, T>> {
         if let Some(object_ptr) = self.get_object_ptr() {
             if object_ptr.is_type(T::TYPE_ID) {
@@ -552,28 +557,28 @@ mod tests {
     fn map_insert_test() {
         let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
-        let map = scope.create::<Map>().unwrap();
+        let map = scope.create::<Map<String, String>>().unwrap();
         let foo = scope.take("Foo".to_string()).unwrap();
         let bar = scope.take("Bar".to_string()).unwrap();
-        let map_value = map.try_as_mut::<Map>().unwrap();
-        map_value.insert(foo.erase_type().into(), bar.erase_type().into());
+        let map_value = map.try_as_mut::<Map<String, String>>().unwrap();
+        map_value.insert(foo.clone().into(), bar.clone().into());
         std::mem::drop(map_value);
         std::mem::drop(foo);
         std::mem::drop(bar);
 
         // Check if lookup works before collect.
         {
-            let map_value = map.try_as_mut::<Map>().unwrap();
+            let map_value = map.try_as_mut::<Map<String, String>>().unwrap();
             let foo = scope.take("Foo".to_string()).unwrap();
-            let bar = scope.from_heap(map_value.get(&foo.erase_type().into()).unwrap());
+            let bar = scope.from_heap(map_value.get(&foo.into()).unwrap());
             assert_eq!(bar.try_as_ref::<String>().unwrap(), "Bar");
         }
 
         heap.collect().ok();
 
-        let map_value = map.try_as_mut::<Map>().unwrap();
+        let map_value = map.try_as_mut::<Map<String, String>>().unwrap();
         let foo = scope.take("Foo".to_string()).unwrap();
-        let bar = scope.from_heap(map_value.get(&foo.erase_type().into()).unwrap());
+        let bar = scope.from_heap(map_value.get(&foo.into()).unwrap());
         assert_eq!(bar.try_as_ref::<String>().unwrap(), "Bar");
     }
 

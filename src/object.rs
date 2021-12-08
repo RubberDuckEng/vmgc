@@ -4,6 +4,7 @@ use std::collections::{HashMap, VecDeque};
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
 
+use crate::heap::{HandleScope, LocalHandle};
 use crate::pointer::*;
 use crate::space::*;
 
@@ -114,6 +115,14 @@ impl HeapHandle<()> {
         let result = Self::new(self.ptr());
         self.set_ptr(TaggedPtr::default());
         result
+    }
+
+    pub fn is_null(&self) -> bool {
+        self.ptr().is_null()
+    }
+
+    pub fn is_num(&self) -> bool {
+        self.ptr().is_num()
     }
 }
 
@@ -244,13 +253,13 @@ impl Traceable for String {
     }
 }
 
-pub type Map = HashMap<HeapHandle<()>, HeapHandle<()>>;
+pub type Map<K, V> = HashMap<HeapHandle<K>, HeapHandle<V>>;
 
-impl HostObject for Map {
+impl<K: 'static, V: 'static> HostObject for Map<K, V> {
     const TYPE_ID: ObjectType = ObjectType::Host;
 }
 
-impl Traceable for Map {
+impl<K: 'static, V: 'static> Traceable for Map<K, V> {
     fn trace(&mut self, visitor: &mut ObjectVisitor) {
         for (key, value) in self.iter_mut() {
             key.trace(visitor);
@@ -298,12 +307,28 @@ impl<T: HostObject> List<T> {
 }
 
 impl<T> List<T> {
+    pub fn pop<'a>(&mut self, scope: &'a HandleScope<'a>) -> Option<LocalHandle<'a, T>> {
+        self.0.pop().map(|handle| scope.from_heap(&handle))
+    }
+
     pub fn truncate(&mut self, len: usize) {
         self.0.truncate(len);
     }
 
     pub fn len(&self) -> usize {
         self.0.len()
+    }
+
+    pub fn first(&self) -> Option<&HeapHandle<T>> {
+        self.0.first()
+    }
+
+    pub fn last(&self) -> Option<&HeapHandle<T>> {
+        self.0.last()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
     }
 }
 
