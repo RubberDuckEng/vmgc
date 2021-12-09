@@ -66,6 +66,10 @@ impl TaggedPtr {
         unsafe { self.bits == TaggedPtr::NULL.bits }
     }
 
+    pub fn is_bool(&self) -> bool {
+        self.is_true_singleton() || self.is_false_singleton()
+    }
+
     // fn singleton_tag(&self) -> usize {
     //     unsafe { self.bits & SINGLETON_TAG_MASK }
     // }

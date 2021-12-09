@@ -299,6 +299,14 @@ impl<'a> LocalHandle<'a, ()> {
     pub fn is_null(&self) -> bool {
         self.ptr().is_null()
     }
+
+    pub fn is_bool(&self) -> bool {
+        self.ptr().is_bool()
+    }
+
+    pub fn is_num(&self) -> bool {
+        self.ptr().is_num()
+    }
 }
 
 pub trait DowncastTo<T> {
@@ -340,6 +348,15 @@ impl<'a> DowncastTo<LocalHandle<'a, bool>> for LocalHandle<'a, ()> {
 }
 
 impl<'a, T: HostObject> LocalHandle<'a, T> {
+    pub fn borrow(&self) -> &'a T {
+        self.try_as_ref().unwrap()
+    }
+
+    pub fn borrow_mut(&self) -> &'a mut T {
+        self.try_as_mut().unwrap()
+    }
+
+    // Old names:
     pub fn as_ref(&self) -> &'a T {
         self.try_as_ref().unwrap()
     }

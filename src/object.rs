@@ -146,12 +146,21 @@ impl<T: HostObject> HeapHandle<T> {
         None
     }
 
-    pub fn as_ref(&self) -> &T {
+    pub fn borrow(&self) -> &T {
         self.try_as_ref().unwrap()
     }
 
-    pub fn as_mut(&self) -> &mut T {
+    pub fn borrow_mut(&self) -> &mut T {
         self.try_as_mut().unwrap()
+    }
+
+    // Old names, remove:
+    pub fn as_ref(&self) -> &T {
+        self.borrow()
+    }
+
+    pub fn as_mut(&self) -> &mut T {
+        self.borrow_mut()
     }
 }
 
@@ -348,6 +357,10 @@ impl<T> List<T> {
 
     pub fn truncate(&mut self, len: usize) {
         self.0.truncate(len);
+    }
+
+    pub fn remove<'a>(&mut self, scope: &'a HandleScope, index: usize) -> LocalHandle<'a, T> {
+        scope.from_heap(&self.0.remove(index))
     }
 
     pub fn len(&self) -> usize {
