@@ -119,6 +119,10 @@ impl HeapHandle<()> {
     pub fn is_num(&self) -> bool {
         self.ptr().is_num()
     }
+
+    pub fn is_bool(&self) -> bool {
+        self.ptr().is_bool()
+    }
 }
 
 impl<T: HostObject> HeapHandle<T> {
@@ -193,6 +197,8 @@ pub trait Traceable: AsAny {
     //     std::ptr::eq(self as *const dyn Traceable, rhs as *const dyn Traceable)
     // }
 
+    // FIXME: If these were separate from Traceable, we could implement
+    // Traceable for Option<Traceable>.
     fn object_hash(&self, ptr: ObjectPtr) -> u64 {
         ptr.addr() as u64
     }
