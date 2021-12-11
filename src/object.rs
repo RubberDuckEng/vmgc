@@ -8,6 +8,7 @@ use std::marker::PhantomData;
 use crate::heap::{HandleScope, LocalHandle};
 use crate::pointer::*;
 use crate::space::*;
+use crate::types::GCError;
 
 pub struct ObjectVisitor {
     pub space: Space,
@@ -168,6 +169,43 @@ impl<T: HostObject> HeapHandle<T> {
     }
 }
 
+// Derive Clone requires T to be Cloneable, which isn't required for Handles.
+impl<T> Clone for HeapHandle<T> {
+    fn clone(&self) -> Self {
+        HeapHandle::new(self.ptr())
+    }
+
+    fn clone_from(&mut self, source: &Self) {
+        self.ptr.set(source.ptr())
+    }
+}
+
+impl TryInto<f64> for HeapHandle<()> {
+    type Error = GCError;
+    fn try_into(self) -> Result<f64, GCError> {
+        self.ptr().try_into()
+    }
+}
+
+impl Into<f64> for HeapHandle<f64> {
+    fn into(self) -> f64 {
+        self.ptr().try_into().unwrap()
+    }
+}
+
+impl TryInto<bool> for HeapHandle<()> {
+    type Error = GCError;
+    fn try_into(self) -> Result<bool, GCError> {
+        self.ptr().try_into()
+    }
+}
+
+impl Into<bool> for HeapHandle<bool> {
+    fn into(self) -> bool {
+        self.ptr().try_into().unwrap()
+    }
+}
+
 pub trait AsAny: Any {
     fn as_any(&self) -> &dyn Any;
     fn type_name(&self) -> &'static str;
@@ -312,7 +350,7 @@ impl<K: 'static, V: 'static> Traceable for Map<K, V> {
     }
 }
 
-#[derive(Hash)]
+#[derive(Clone, Hash)]
 pub struct List<T>(Vec<HeapHandle<T>>);
 
 impl<T> Default for List<T> {
@@ -387,6 +425,10 @@ impl<T> List<T> {
 
     pub fn iter(&self) -> std::slice::Iter<'_, HeapHandle<T>> {
         self.0.iter()
+    }
+
+    pub fn split_off(&mut self, at: usize) -> Self {
+        Self(self.0.split_off(at))
     }
 }
 
