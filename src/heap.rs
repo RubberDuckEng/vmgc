@@ -72,8 +72,8 @@ pub struct Heap {
 }
 
 impl Heap {
-    pub fn new(size: usize) -> Result<Heap, GCError> {
-        let half_size = size / 2;
+    pub fn new(size_in_bytes: usize) -> Result<Heap, GCError> {
+        let half_size = size_in_bytes / 2;
         Ok(Heap {
             inner: Arc::new(RefCell::new(HeapInner::new(Space::new(half_size)?))),
         })
@@ -182,6 +182,13 @@ impl<'a> HandleScope<'a> {
         Ok(LocalHandle::<T>::new(self, object_ptr.into()))
     }
 
+    // Should this be create_str?
+    // Could also do generically for ToOwned?
+    // fn from_unowned<T, S>(...) where T: ToOwned<S>, S : HostObject {...}
+    pub fn str(&self, object: &str) -> Result<LocalHandle<String>, GCError> {
+        self.take(object.to_string())
+    }
+
     fn add(&self, ptr: TaggedPtr) -> usize {
         let mut inner = self.heap.inner.borrow_mut();
         let cells = &mut inner.scopes[self.index];
@@ -196,6 +203,15 @@ impl<'a> HandleScope<'a> {
 
     pub fn from_heap<T>(&self, handle: &HeapHandle<T>) -> LocalHandle<T> {
         LocalHandle::<T>::new(self, handle.ptr())
+    }
+
+    pub fn from_maybe_heap<T>(
+        &self,
+        maybe_handle: &Option<HeapHandle<T>>,
+    ) -> Option<LocalHandle<T>> {
+        maybe_handle
+            .clone()
+            .map(|handle| LocalHandle::<T>::new(self, handle.ptr()))
     }
 
     pub fn as_ref<T: HostObject>(&self, handle: &GlobalHandle<T>) -> &T {
@@ -266,26 +282,6 @@ impl<'a, T> LocalHandle<'a, T> {
         self.ptr().try_into().ok()
     }
 
-    pub fn try_as_ref<S: HostObject>(&self) -> Option<&'a S> {
-        if let Some(object_ptr) = self.get_object_ptr() {
-            if object_ptr.is_type(S::TYPE_ID) {
-                let ptr = TraceableObject::downcast::<S>(object_ptr);
-                return Some(unsafe { &*ptr });
-            }
-        }
-        None
-    }
-
-    pub fn try_as_mut<S: HostObject>(&self) -> Option<&'a mut S> {
-        if let Some(object_ptr) = self.get_object_ptr() {
-            if object_ptr.is_type(S::TYPE_ID) {
-                let ptr = TraceableObject::downcast_mut::<S>(object_ptr);
-                return Some(unsafe { &mut *ptr });
-            }
-        }
-        None
-    }
-
     pub fn erase_type(&self) -> LocalHandle<'a, ()> {
         LocalHandle {
             scope: self.scope,
@@ -306,6 +302,34 @@ impl<'a> LocalHandle<'a, ()> {
 
     pub fn is_num(&self) -> bool {
         self.ptr().is_num()
+    }
+
+    pub fn try_as_ref<S: HostObject>(&self) -> Option<&'a S> {
+        if let Some(object_ptr) = self.get_object_ptr() {
+            if object_ptr.is_type(S::TYPE_ID) {
+                if let Some(ptr) = TraceableObject::try_downcast::<S>(object_ptr) {
+                    return Some(unsafe { &*ptr });
+                }
+            }
+        }
+        None
+    }
+
+    pub fn try_as_mut<S: HostObject>(&self) -> Option<&'a mut S> {
+        if let Some(object_ptr) = self.get_object_ptr() {
+            if object_ptr.is_type(S::TYPE_ID) {
+                if let Some(ptr) = TraceableObject::try_downcast::<S>(object_ptr) {
+                    let mut_ptr = ptr as *mut S;
+                    return Some(unsafe { &mut *mut_ptr });
+                }
+            }
+        }
+        None
+    }
+
+    pub fn is_of_type<S: HostObject>(&self) -> bool {
+        let maybe_ref: Option<&S> = self.try_as_ref();
+        maybe_ref.is_some()
     }
 }
 
@@ -349,20 +373,24 @@ impl<'a> DowncastTo<LocalHandle<'a, bool>> for LocalHandle<'a, ()> {
 
 impl<'a, T: HostObject> LocalHandle<'a, T> {
     pub fn borrow(&self) -> &'a T {
-        self.try_as_ref().unwrap()
+        let object_ptr = self.get_object_ptr().unwrap();
+        let ptr = TraceableObject::downcast::<T>(object_ptr);
+        unsafe { &*ptr }
     }
 
     pub fn borrow_mut(&self) -> &'a mut T {
-        self.try_as_mut().unwrap()
+        let object_ptr = self.get_object_ptr().unwrap();
+        let ptr = TraceableObject::downcast_mut::<T>(object_ptr);
+        unsafe { &mut *ptr }
     }
 
     // Old names:
     pub fn as_ref(&self) -> &'a T {
-        self.try_as_ref().unwrap()
+        self.borrow()
     }
 
     pub fn as_mut(&self) -> &'a mut T {
-        self.try_as_mut().unwrap()
+        self.borrow_mut()
     }
 }
 
@@ -481,7 +509,7 @@ mod tests {
         let scope = HandleScope::new(&heap);
 
         let handle = scope.create::<DropObject>().unwrap();
-        handle.try_as_mut::<DropObject>().unwrap().counter = Rc::clone(&counter);
+        handle.as_mut().counter = Rc::clone(&counter);
         std::mem::drop(handle);
         assert_eq!(0u32, counter.get());
         std::mem::drop(scope);
@@ -496,7 +524,7 @@ mod tests {
         let scope = HandleScope::new(&heap);
         let handle = scope.create::<List<DropObject>>().unwrap();
 
-        let list = handle.try_as_mut::<List<DropObject>>().unwrap();
+        let list = handle.as_mut();
         list.push(scope.create::<DropObject>().unwrap().into());
         list.push(scope.create::<DropObject>().unwrap().into());
         list.push(scope.create::<DropObject>().unwrap().into());
@@ -554,11 +582,11 @@ mod tests {
         let scope = HandleScope::new(&heap);
         let list = scope.create::<List<f64>>().unwrap();
         let one = scope.create_num(1.0);
-        let list_value = list.try_as_mut::<List<f64>>().unwrap();
+        let list_value = list.as_mut();
         list_value.push(one.into());
         std::mem::drop(list_value);
         heap.collect().ok();
-        let list_value = list.try_as_mut::<List<f64>>().unwrap();
+        let list_value = list.as_ref();
         assert_eq!(list_value.len(), 1);
     }
 
@@ -568,7 +596,7 @@ mod tests {
         let scope = HandleScope::new(&heap);
         let string_handle = scope.create::<String>().unwrap();
         heap.collect().ok();
-        let string_value = string_handle.try_as_ref::<String>().unwrap();
+        let string_value = string_handle.as_ref();
         assert_eq!(string_value, "");
     }
 
@@ -578,7 +606,7 @@ mod tests {
         let scope = HandleScope::new(&heap);
         let string_handle = scope.take("Foo".to_string()).unwrap();
         heap.collect().ok();
-        let string_value = string_handle.try_as_ref::<String>().unwrap();
+        let string_value = string_handle.as_ref();
         assert_eq!(string_value, "Foo");
     }
 
@@ -587,36 +615,18 @@ mod tests {
         let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
         let list = scope.create::<List<String>>().unwrap();
-        let string = scope.take("Foo".to_string()).unwrap();
-        let list_value = list.try_as_mut::<List<String>>().unwrap();
+        let string = scope.str("Foo").unwrap();
+        let list_value = list.as_mut();
         list_value.push(string.clone().into());
         list_value.push(string.clone().into());
         std::mem::drop(list_value);
         heap.collect().ok();
-        let list_value = list.try_as_mut::<List<String>>().unwrap();
+        let list_value = list.as_mut();
         assert_eq!(list_value.len(), 2);
-        assert_eq!(
-            scope
-                .from_heap(&list_value[0])
-                .try_as_ref::<String>()
-                .unwrap(),
-            "Foo"
-        );
-        assert_eq!(
-            scope
-                .from_heap(&list_value[1])
-                .try_as_ref::<String>()
-                .unwrap(),
-            "Foo"
-        );
-        string.try_as_mut::<String>().unwrap().push_str("Bar");
-        assert_eq!(
-            scope
-                .from_heap(&list_value[0])
-                .try_as_ref::<String>()
-                .unwrap(),
-            "FooBar"
-        );
+        assert_eq!(list_value[0].as_ref(), "Foo");
+        assert_eq!(list_value[1].as_ref(), "Foo");
+        string.as_mut().push_str("Bar");
+        assert_eq!(list_value[0].as_ref(), "FooBar");
     }
 
     #[test]
@@ -624,9 +634,9 @@ mod tests {
         let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
         let map = scope.create::<Map<String, String>>().unwrap();
-        let foo = scope.take("Foo".to_string()).unwrap();
-        let bar = scope.take("Bar".to_string()).unwrap();
-        let map_value = map.try_as_mut::<Map<String, String>>().unwrap();
+        let foo = scope.str("Foo").unwrap();
+        let bar = scope.str("Bar").unwrap();
+        let map_value = map.as_mut();
         map_value.insert(foo.clone().into(), bar.clone().into());
         std::mem::drop(map_value);
         std::mem::drop(foo);
@@ -634,18 +644,18 @@ mod tests {
 
         // Check if lookup works before collect.
         {
-            let map_value = map.try_as_mut::<Map<String, String>>().unwrap();
-            let foo = scope.take("Foo".to_string()).unwrap();
+            let map_value = map.as_mut();
+            let foo = scope.str("Foo").unwrap();
             let bar = scope.from_heap(map_value.get(&foo.into()).unwrap());
-            assert_eq!(bar.try_as_ref::<String>().unwrap(), "Bar");
+            assert_eq!(bar.as_ref(), "Bar");
         }
 
         heap.collect().ok();
 
-        let map_value = map.try_as_mut::<Map<String, String>>().unwrap();
-        let foo = scope.take("Foo".to_string()).unwrap();
-        let bar = scope.from_heap(map_value.get(&foo.into()).unwrap());
-        assert_eq!(bar.try_as_ref::<String>().unwrap(), "Bar");
+        let map_value = map.as_ref();
+        let foo = scope.str("Foo").unwrap();
+        let bar = map_value.get(&foo.into()).unwrap();
+        assert_eq!(bar.as_ref(), "Bar");
     }
 
     #[test]
@@ -672,7 +682,7 @@ mod tests {
         assert_eq!(null.is_null(), true);
 
         // HostObjects (e.g. String)
-        let string: LocalHandle<String> = scope.take("Foo".to_string()).unwrap();
+        let string: LocalHandle<String> = scope.str("Foo").unwrap();
         assert_eq!(string.as_ref(), "Foo");
 
         // Untyped handles
@@ -698,32 +708,40 @@ mod tests {
         let heap = Heap::new(1000).unwrap();
         let scope = HandleScope::new(&heap);
 
-        // // Bools
+        // Bools
         let untyped: LocalHandle<()> = scope.create_bool(true).erase_type();
-        let typed: Option<LocalHandle<String>> = untyped.try_downcast();
-        assert!(typed.is_none());
-        // assert!(untyped.try_downcast::<bool>().is_some());
-        // assert!(untyped.try_downcast::<f64>().is_none());
+        let maybe_string: Option<LocalHandle<String>> = untyped.try_downcast();
+        let maybe_bool: Option<LocalHandle<bool>> = untyped.try_downcast();
+        let maybe_f64: Option<LocalHandle<f64>> = untyped.try_downcast();
+        assert!(maybe_string.is_none());
+        assert!(maybe_bool.is_some());
+        assert!(maybe_f64.is_none());
 
-        // // Nums
+        // Nums
         let untyped: LocalHandle<()> = scope.create_num(1.0).erase_type();
-        let typed: Option<LocalHandle<String>> = untyped.try_downcast();
-        assert!(typed.is_none());
-        // assert!(untyped.try_downcast::<bool>().is_none());
-        // assert!(untyped.try_downcast::<f64>().is_some());
+        let maybe_string: Option<LocalHandle<String>> = untyped.try_downcast();
+        let maybe_bool: Option<LocalHandle<bool>> = untyped.try_downcast();
+        let maybe_f64: Option<LocalHandle<f64>> = untyped.try_downcast();
+        assert!(maybe_string.is_none());
+        assert!(maybe_bool.is_none());
+        assert!(maybe_f64.is_some());
 
-        // // Null
+        // Null
         let untyped: LocalHandle<()> = scope.create_null();
-        let typed: Option<LocalHandle<String>> = untyped.try_downcast();
-        assert!(typed.is_none());
-        // assert!(untyped.try_downcast::<bool>().is_none());
-        // assert!(untyped.try_downcast::<f64>().is_none());
+        let maybe_string: Option<LocalHandle<String>> = untyped.try_downcast();
+        let maybe_bool: Option<LocalHandle<bool>> = untyped.try_downcast();
+        let maybe_f64: Option<LocalHandle<f64>> = untyped.try_downcast();
+        assert!(maybe_string.is_none());
+        assert!(maybe_bool.is_none());
+        assert!(maybe_f64.is_none());
 
         // HostObjects (e.g. String)
-        let untyped: LocalHandle<()> = scope.take("Foo".to_string()).unwrap().erase_type();
-        let typed: Option<LocalHandle<String>> = untyped.try_downcast();
-        assert!(typed.is_some());
-        // assert!(untyped.try_downcast::<bool>().is_none());
-        // assert!(untyped.try_downcast::<f64>().is_none());
+        let untyped: LocalHandle<()> = scope.str("Foo").unwrap().erase_type();
+        let maybe_string: Option<LocalHandle<String>> = untyped.try_downcast();
+        let maybe_bool: Option<LocalHandle<bool>> = untyped.try_downcast();
+        let maybe_f64: Option<LocalHandle<f64>> = untyped.try_downcast();
+        assert!(maybe_string.is_some());
+        assert!(maybe_bool.is_none());
+        assert!(maybe_f64.is_none());
     }
 }

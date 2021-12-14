@@ -4,6 +4,7 @@ use std::collections::{HashMap, VecDeque};
 use std::convert::TryInto;
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
+use std::ops::IndexMut;
 
 use crate::heap::{HandleScope, LocalHandle};
 use crate::pointer::*;
@@ -67,7 +68,8 @@ pub struct HeapHandle<T> {
     _phantom: PhantomData<T>,
 }
 
-impl<T> Default for HeapHandle<T> {
+// null is only allowed for HeapHandle<()>
+impl Default for HeapHandle<()> {
     fn default() -> Self {
         HeapHandle::new(TaggedPtr::NULL)
     }
@@ -97,11 +99,16 @@ impl<T> HeapHandle<T> {
         }
     }
 
+    // FIXME: Should only be on T != ()
     pub fn erase_type(&self) -> HeapHandle<()> {
         HeapHandle {
             ptr: self.ptr.clone(),
             _phantom: PhantomData::<()>::default(),
         }
+    }
+
+    fn get_object_ptr(&self) -> Option<ObjectPtr> {
+        self.ptr().try_into().ok()
     }
 }
 
@@ -124,11 +131,9 @@ impl HeapHandle<()> {
     pub fn is_bool(&self) -> bool {
         self.ptr().is_bool()
     }
-}
 
-impl<T: HostObject> HeapHandle<T> {
-    fn get_object_ptr(&self) -> Option<ObjectPtr> {
-        self.ptr().try_into().ok()
+    pub fn is_true(&self) -> bool {
+        self.ptr().is_true_singleton()
     }
 
     pub fn try_as_ref<S: HostObject>(&self) -> Option<&S> {
@@ -151,12 +156,23 @@ impl<T: HostObject> HeapHandle<T> {
         None
     }
 
+    pub fn is_of_type<S: HostObject>(&self) -> bool {
+        let maybe_ref: Option<&S> = self.try_as_ref();
+        maybe_ref.is_some()
+    }
+}
+
+impl<T: HostObject> HeapHandle<T> {
     pub fn borrow(&self) -> &T {
-        self.try_as_ref().unwrap()
+        let object_ptr = self.get_object_ptr().unwrap();
+        let ptr = TraceableObject::downcast::<T>(object_ptr);
+        return unsafe { &*ptr };
     }
 
     pub fn borrow_mut(&self) -> &mut T {
-        self.try_as_mut().unwrap()
+        let object_ptr = self.get_object_ptr().unwrap();
+        let ptr = TraceableObject::downcast_mut::<T>(object_ptr);
+        return unsafe { &mut *ptr };
     }
 
     // Old names, remove:
@@ -203,6 +219,18 @@ impl TryInto<bool> for HeapHandle<()> {
 impl Into<bool> for HeapHandle<bool> {
     fn into(self) -> bool {
         self.ptr().try_into().unwrap()
+    }
+}
+
+impl From<bool> for HeapHandle<bool> {
+    fn from(value: bool) -> Self {
+        HeapHandle::new(value.into())
+    }
+}
+
+impl From<f64> for HeapHandle<f64> {
+    fn from(value: f64) -> Self {
+        HeapHandle::new(value.into())
     }
 }
 
@@ -371,7 +399,7 @@ impl<T: 'static> Traceable for List<T> {
 
 impl List<()> {
     pub fn push<S>(&mut self, handle: HeapHandle<S>) {
-        self.push(handle.erase_type());
+        self.0.push(handle.erase_type());
     }
 }
 
@@ -407,6 +435,14 @@ impl<T> List<T> {
         scope.from_heap(&self.0.remove(index))
     }
 
+    pub fn insert(&mut self, index: usize, handle: HeapHandle<T>) {
+        self.0.insert(index, handle)
+    }
+
+    pub fn swap(&mut self, a: usize, b: usize) {
+        self.0.swap(a, b)
+    }
+
     pub fn len(&self) -> usize {
         self.0.len()
     }
@@ -429,6 +465,10 @@ impl<T> List<T> {
 
     pub fn split_off(&mut self, at: usize) -> Self {
         Self(self.0.split_off(at))
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear()
     }
 }
 
@@ -453,5 +493,18 @@ impl<T, I: std::slice::SliceIndex<[HeapHandle<T>]>> std::ops::Index<I> for List<
 impl<'a, T> From<Vec<LocalHandle<'a, T>>> for List<T> {
     fn from(elements: Vec<LocalHandle<'a, T>>) -> Self {
         List(elements.iter().map(|local| local.clone().into()).collect())
+    }
+}
+
+// FIXME: Is this even needed?  Is this just clone?
+impl<'a, T> From<Vec<HeapHandle<T>>> for List<T> {
+    fn from(elements: Vec<HeapHandle<T>>) -> Self {
+        List(elements)
+    }
+}
+
+impl<T> IndexMut<usize> for List<T> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        self.0.index_mut(index)
     }
 }

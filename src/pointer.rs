@@ -54,7 +54,7 @@ impl TaggedPtr {
         unsafe { (self.bits & PTR_TAG_MASK) == PTR_TAG_MASK }
     }
 
-    fn is_true_singleton(&self) -> bool {
+    pub fn is_true_singleton(&self) -> bool {
         unsafe { self.bits == TaggedPtr::TRUE.bits }
     }
 
@@ -149,6 +149,7 @@ impl TryFrom<TaggedPtr> for ObjectPtr {
 
 impl std::fmt::Debug for TaggedPtr {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // FIXME: This only seems to print "TaggedPtr"?
         f.debug_struct("TaggedPtr").finish()
     }
 }
