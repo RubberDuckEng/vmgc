@@ -139,8 +139,9 @@ impl HeapHandle<()> {
     pub fn try_as_ref<S: HostObject>(&self) -> Option<&S> {
         if let Some(object_ptr) = self.get_object_ptr() {
             if object_ptr.is_type(S::TYPE_ID) {
-                let ptr = TraceableObject::downcast::<S>(object_ptr);
-                return Some(unsafe { &*ptr });
+                if let Some(ptr) = TraceableObject::try_downcast::<S>(object_ptr) {
+                    return Some(unsafe { &*ptr });
+                }
             }
         }
         None
@@ -149,8 +150,10 @@ impl HeapHandle<()> {
     pub fn try_as_mut<S: HostObject>(&self) -> Option<&mut S> {
         if let Some(object_ptr) = self.get_object_ptr() {
             if object_ptr.is_type(S::TYPE_ID) {
-                let ptr = TraceableObject::downcast_mut::<S>(object_ptr);
-                return Some(unsafe { &mut *ptr });
+                if let Some(ptr) = TraceableObject::try_downcast::<S>(object_ptr) {
+                    let mut_ptr = ptr as *mut S;
+                    return Some(unsafe { &mut *mut_ptr });
+                }
             }
         }
         None

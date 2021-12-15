@@ -744,4 +744,20 @@ mod tests {
         assert!(maybe_bool.is_none());
         assert!(maybe_f64.is_none());
     }
+    #[test]
+    fn is_of_type_test() {
+        let heap = Heap::new(1000).unwrap();
+        let scope = HandleScope::new(&heap);
+
+        let untyped: LocalHandle<()> = scope.str("foo").unwrap().erase_type();
+        assert_eq!(untyped.is_of_type::<String>(), true);
+        assert_eq!(untyped.is_of_type::<DropObject>(), false);
+        assert_eq!(untyped.is_bool(), false);
+
+        // The HeapHandle version of is_of_type used to crash.
+        let heap: HeapHandle<()> = untyped.into();
+        assert_eq!(heap.is_of_type::<String>(), true);
+        assert_eq!(heap.is_of_type::<DropObject>(), false);
+        assert_eq!(heap.is_bool(), false);
+    }
 }
