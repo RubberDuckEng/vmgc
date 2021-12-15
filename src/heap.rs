@@ -146,17 +146,21 @@ impl Drop for Root {
     }
 }
 
-pub struct HandleScope<'a> {
-    heap: &'a Heap,
+pub struct HandleScope<'heap> {
+    heap: &'heap Heap,
     index: usize,
 }
 
-impl<'a> HandleScope<'a> {
+impl<'heap> HandleScope<'heap> {
     pub fn new(heap: &Heap) -> HandleScope {
         let mut inner = heap.inner.borrow_mut();
         let index = inner.scopes.len();
         inner.scopes.push(vec![]);
         HandleScope { heap, index }
+    }
+
+    pub fn create_child_scope(&self) -> HandleScope<'heap> {
+        HandleScope::new(self.heap)
     }
 
     pub fn create_num(&self, value: f64) -> LocalHandle<f64> {
@@ -167,7 +171,6 @@ impl<'a> HandleScope<'a> {
         LocalHandle::<bool>::new(self, value.into())
     }
 
-    // TODO: What type should null be?
     pub fn create_null(&self) -> LocalHandle<()> {
         LocalHandle::<()>::new(self, TaggedPtr::NULL)
     }
@@ -205,6 +208,10 @@ impl<'a> HandleScope<'a> {
         LocalHandle::<T>::new(self, handle.ptr())
     }
 
+    pub fn from_local<T>(&self, handle: &LocalHandle<'_, T>) -> LocalHandle<T> {
+        LocalHandle::<T>::new(self, handle.ptr())
+    }
+
     pub fn from_maybe_heap<T>(
         &self,
         maybe_handle: &Option<HeapHandle<T>>,
@@ -230,7 +237,7 @@ impl<'a> HandleScope<'a> {
     }
 }
 
-impl<'a> Drop for HandleScope<'a> {
+impl<'heap> Drop for HandleScope<'heap> {
     fn drop(&mut self) {
         let mut inner = self.heap.inner.borrow_mut();
         inner.scopes.pop();
@@ -759,5 +766,33 @@ mod tests {
         assert_eq!(heap.is_of_type::<String>(), true);
         assert_eq!(heap.is_of_type::<DropObject>(), false);
         assert_eq!(heap.is_bool(), false);
+    }
+
+    #[test]
+    fn nested_scope_test() {
+        let heap = Heap::new(1000).unwrap();
+        let before_size = heap.used();
+        let outer = HandleScope::new(&heap);
+        {
+            let inner = outer.create_child_scope();
+            inner.str("foo").unwrap();
+            let inner_size = heap.used();
+            assert!(before_size < inner_size);
+            heap.collect().unwrap();
+            assert_eq!(heap.used(), inner_size);
+        }
+        assert!(before_size < heap.used());
+        heap.collect().unwrap();
+        assert_eq!(before_size, heap.used());
+
+        {
+            let inner = outer.create_child_scope();
+            let inner_string = inner.str("foo").unwrap();
+            outer.from_local(&inner_string);
+        }
+        // With the inner local moved to the outer scope, it's not collected.
+        assert!(before_size < heap.used());
+        heap.collect().unwrap();
+        assert!(before_size < heap.used());
     }
 }
