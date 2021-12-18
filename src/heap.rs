@@ -68,6 +68,7 @@ impl std::fmt::Debug for HeapInner {
 
 #[derive(Debug)]
 pub struct Heap {
+    max_size_in_bytes: usize,
     inner: Arc<RefCell<HeapInner>>,
 }
 
@@ -75,17 +76,23 @@ impl Heap {
     pub fn new(size_in_bytes: usize) -> Result<Heap, GCError> {
         let half_size = size_in_bytes / 2;
         Ok(Heap {
+            max_size_in_bytes: size_in_bytes,
             inner: Arc::new(RefCell::new(HeapInner::new(Space::new(half_size)?))),
         })
     }
 
-    pub fn used(&self) -> usize {
-        self.inner.borrow().space.used()
+    pub fn used_bytes(&self) -> usize {
+        self.inner.borrow().space.used_bytes()
+    }
+
+    pub fn free_bytes(&self) -> usize {
+        self.inner.borrow().space.free_bytes()
     }
 
     pub fn collect(&self) -> Result<(), GCError> {
         let doomed = {
-            let mut visitor = ObjectVisitor::new(Space::new(self.inner.borrow().space.size)?);
+            let mut visitor =
+                ObjectVisitor::new(Space::new(self.inner.borrow().space.size_in_bytes)?);
             let mut inner = self.inner.borrow_mut();
             inner.trace(&mut visitor);
             let doomed = inner.update_weak();
@@ -98,11 +105,24 @@ impl Heap {
 
     fn emplace<T: HostObject>(&self, object: Box<T>) -> Result<ObjectPtr, GCError> {
         let object_size = std::mem::size_of::<TraceableObject>();
-        let mut inner = self.inner.borrow_mut();
-        let header = ObjectHeader::new(&mut inner.space, object_size, T::TYPE_ID)?;
+        let header = {
+            let maybe_header =
+                ObjectHeader::new(&mut self.inner.borrow_mut().space, object_size, T::TYPE_ID);
+            // Collect here.  Release inner mut-borrow and call collect, try again.
+            match maybe_header {
+                Err(_) => {
+                    self.collect()?;
+                    ObjectHeader::new(&mut self.inner.borrow_mut().space, object_size, T::TYPE_ID)?
+                }
+                Ok(header) => header,
+            }
+        };
         let object_ptr = header.as_ptr().to_object_ptr();
         TraceableObject::from_box(object).store(object_ptr);
-        inner.weaks.push(HeapHandle::new(object_ptr.into()));
+        self.inner
+            .borrow_mut()
+            .weaks
+            .push(HeapHandle::new(object_ptr.into()));
         Ok(object_ptr)
     }
 }
@@ -491,7 +511,7 @@ mod tests {
     #[test]
     pub fn smoke_test() {
         let heap = Heap::new(1000).unwrap();
-        assert_eq!(heap.used(), 0);
+        assert_eq!(heap.used_bytes(), 0);
         let two: GlobalHandle<DropObject> = {
             let scope = HandleScope::new(&heap);
             let one = scope.create::<DropObject>().unwrap();
@@ -499,14 +519,14 @@ mod tests {
             std::mem::drop(one);
             two.into()
         };
-        let used_before_collection = heap.used();
+        let used_before_collection = heap.used_bytes();
         heap.collect().unwrap();
-        let used_after_collection = heap.used();
+        let used_after_collection = heap.used_bytes();
         assert!(0 < used_after_collection);
         assert!(used_before_collection > used_after_collection);
         std::mem::drop(two);
         heap.collect().unwrap();
-        assert_eq!(0, heap.used());
+        assert_eq!(0, heap.used_bytes());
     }
 
     #[test]
@@ -537,15 +557,15 @@ mod tests {
         list.push(scope.create::<DropObject>().unwrap().into());
         std::mem::drop(list);
 
-        let used = heap.used();
+        let used = heap.used_bytes();
         heap.collect().ok();
-        assert_eq!(used, heap.used());
+        assert_eq!(used, heap.used_bytes());
         std::mem::drop(handle);
         heap.collect().ok();
-        assert_eq!(used, heap.used());
+        assert_eq!(used, heap.used_bytes());
         std::mem::drop(scope);
         heap.collect().ok();
-        assert_eq!(0, heap.used());
+        assert_eq!(0, heap.used_bytes());
     }
 
     #[test]
@@ -555,7 +575,7 @@ mod tests {
 
         let a = scope.create_num(1.0);
         let b = scope.create_num(2.0);
-        assert_eq!(0, heap.used());
+        assert_eq!(0, heap.used_bytes());
         let a_value: f64 = a.ptr().try_into().unwrap();
         assert_eq!(1.0, a_value);
         let b_value: f64 = b.ptr().try_into().unwrap();
@@ -771,19 +791,19 @@ mod tests {
     #[test]
     fn nested_scope_test() {
         let heap = Heap::new(1000).unwrap();
-        let before_size = heap.used();
+        let before_size = heap.used_bytes();
         let outer = HandleScope::new(&heap);
         {
             let inner = outer.create_child_scope();
             inner.str("foo").unwrap();
-            let inner_size = heap.used();
+            let inner_size = heap.used_bytes();
             assert!(before_size < inner_size);
             heap.collect().unwrap();
-            assert_eq!(heap.used(), inner_size);
+            assert_eq!(heap.used_bytes(), inner_size);
         }
-        assert!(before_size < heap.used());
+        assert!(before_size < heap.used_bytes());
         heap.collect().unwrap();
-        assert_eq!(before_size, heap.used());
+        assert_eq!(before_size, heap.used_bytes());
 
         {
             let inner = outer.create_child_scope();
@@ -791,8 +811,32 @@ mod tests {
             outer.from_local(&inner_string);
         }
         // With the inner local moved to the outer scope, it's not collected.
-        assert!(before_size < heap.used());
+        assert!(before_size < heap.used_bytes());
         heap.collect().unwrap();
-        assert!(before_size < heap.used());
+        assert!(before_size < heap.used_bytes());
+    }
+
+    #[test]
+    fn test_collect_on_allocate() {
+        // Make a heap
+        let heap = Heap::new(1000).unwrap();
+        let emtpy_size = heap.used_bytes();
+        let one_object_size;
+        // Fill heap
+        {
+            let scope = HandleScope::new(&heap);
+            scope.str("foo").unwrap();
+            one_object_size = heap.used_bytes() - emtpy_size;
+            // Loop until next allocate would fill heap
+            while heap.free_bytes() > one_object_size {
+                scope.str("foo").unwrap();
+            }
+            // Release handle scope, but does not collect.
+        }
+        assert!(heap.used_bytes() > one_object_size);
+        // Attempt to allocate again, expect it to succeed and usage to go down.
+        let scope = HandleScope::new(&heap);
+        scope.str("foo").unwrap();
+        assert_eq!(heap.used_bytes(), one_object_size);
     }
 }

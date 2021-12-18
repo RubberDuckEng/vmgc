@@ -11,16 +11,10 @@ Inspired in part by https://rust-hosted-langs.github.io/book/introduction.html
 * Shrink object header
 * Generational collection
 * Thread safety
-* Smarter size specification for Heap size (max size?)
 * Provide allocator for Heap?
-* Some sort of typed Handle?
 * Consider making a HandleScope like AutoReleasePool?
-* Consider having a NonNullHandle type?
 * Collect on allocation
 * Give examples/docs to make clear which Handle types are nullable vs. not.
 * Guidance on the prefered order of LocalHandle vs &LocalHandle vs &HeapHandle as passing types.
-* Should as_ref() be renamed borrow()?  and as_mut() as borrow_mut()?
-* Explore if FooHandle<Option<T>> could be null or T or if we need to use Option<FooHandle<T>>.
 * How can we share more code (e.g. is_of_type, try_downcast, etc.) between LocalHandle and HeapHandle?
-
-# Blocking for wren integration
+* Some sort of Guard and Temporary which refers back to a Guard.  Could just assert if you try to allocate?

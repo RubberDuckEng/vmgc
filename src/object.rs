@@ -12,14 +12,14 @@ use crate::space::*;
 use crate::types::GCError;
 
 pub struct ObjectVisitor {
-    pub space: Space,
+    pub new_space: Space,
     pub queue: VecDeque<ObjectPtr>,
 }
 
 impl ObjectVisitor {
     pub fn new(space: Space) -> ObjectVisitor {
         ObjectVisitor {
-            space,
+            new_space: space,
             queue: VecDeque::default(),
         }
     }
@@ -29,7 +29,7 @@ impl ObjectVisitor {
             return new_header_ptr.to_object_ptr();
         }
         let alloc_size = header.alloc_size();
-        let new_header_ptr = HeaderPtr::new(self.space.alloc(alloc_size).unwrap());
+        let new_header_ptr = HeaderPtr::new(self.new_space.alloc(alloc_size).unwrap());
         unsafe {
             std::ptr::copy_nonoverlapping(
                 header.as_ptr().addr(),
