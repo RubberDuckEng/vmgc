@@ -96,7 +96,7 @@ impl Heap {
             let mut inner = self.inner.borrow_mut();
             inner.trace(&mut visitor);
             let doomed = inner.update_weak();
-            std::mem::swap(&mut inner.space, &mut visitor.space);
+            std::mem::swap(&mut inner.space, &mut visitor.new_space);
             doomed
         };
         std::mem::drop(doomed);
