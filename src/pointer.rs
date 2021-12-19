@@ -156,6 +156,7 @@ impl std::fmt::Debug for TaggedPtr {
 
 impl PartialEq for TaggedPtr {
     fn eq(&self, rhs: &TaggedPtr) -> bool {
+        // Note: this will make -0 != 0
         if self.is_ptr() != rhs.is_ptr() {
             return false;
         }

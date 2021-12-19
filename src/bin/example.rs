@@ -1,8 +1,5 @@
 use std::convert::TryInto;
-use vmgc::heap::*;
-use vmgc::object::*;
-use vmgc::pointer::ObjectType;
-use vmgc::types::GCError;
+use vmgc::*;
 
 // Holds the heap and the stack.
 struct VM {
