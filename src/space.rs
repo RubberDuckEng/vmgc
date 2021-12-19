@@ -11,6 +11,8 @@ pub struct Space {
 }
 
 impl Space {
+    // FIXME: Returning GCError::NoSpace likely leaves us in an unrecoverable
+    // condition, consider returning something more severe?
     pub fn new(size_in_bytes: usize) -> Result<Space, GCError> {
         // TODO: Should we allocte on a 4k boundary? Might have implications
         // for returning memory to the system.

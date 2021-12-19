@@ -264,7 +264,8 @@ pub struct ObjectHeader {
 const HEADER_SIZE: usize = std::mem::size_of::<ObjectHeader>();
 
 impl ObjectHeader {
-    pub fn new<'a>(
+    // Should only be called by ObjectHeader::new
+    pub(crate) fn new<'a>(
         space: &mut Space,
         object_size: usize,
         object_type: ObjectType,
