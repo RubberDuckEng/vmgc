@@ -831,6 +831,12 @@ mod tests {
             while heap.free_bytes() > one_object_size {
                 scope.str("foo").unwrap();
             }
+
+            let full_size = heap.used_bytes();
+            // Verify that collection works with a full heap, but does not
+            // actually release anything else by the HandleScope.
+            heap.collect().unwrap();
+            assert_eq!(heap.used_bytes(), full_size);
             // Release handle scope, but does not collect.
         }
         assert!(heap.used_bytes() > one_object_size);
