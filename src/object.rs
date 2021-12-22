@@ -511,6 +511,12 @@ impl<'a, T> From<Vec<HeapHandle<T>>> for List<T> {
     }
 }
 
+impl<'a, T> Into<Vec<HeapHandle<T>>> for List<T> {
+    fn into(self) -> Vec<HeapHandle<T>> {
+        self.0
+    }
+}
+
 impl<T> IndexMut<usize> for List<T> {
     fn index_mut(&mut self, index: usize) -> &mut Self::Output {
         self.0.index_mut(index)
