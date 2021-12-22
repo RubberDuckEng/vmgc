@@ -434,6 +434,11 @@ impl<T> List<T> {
         self.0.truncate(len);
     }
 
+    // Can this work for anything other than HeapHandle::default() aka null?
+    pub fn resize(&mut self, new_len: usize, value: HeapHandle<T>) {
+        self.0.resize(new_len, value)
+    }
+
     pub fn remove<'a>(&mut self, scope: &'a HandleScope, index: usize) -> LocalHandle<'a, T> {
         scope.from_heap(&self.0.remove(index))
     }
