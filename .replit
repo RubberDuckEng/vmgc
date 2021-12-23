@@ -1,2 +1,27 @@
 language = "nix"
+
+# The command that is executed when the run button is clicked.
 run = "cargo test"
+
+# The default file opened in the editor.
+entrypoint = "src/lib.rs"
+
+# Packager configuration for the Universal Package Manager
+# See https://github.com/replit/upm for supported languages.
+[packager]
+language = "rust"
+
+  [packager.features]
+  # Enables the package search sidebar
+  packageSearch = true
+  # Enabled package guessing
+  guessImports = false
+
+# Per language configuration: language.<lang name>
+[languages.rust]
+# The glob pattern to match files for this programming language
+pattern = "**/*.rs"
+
+    # LSP configuration for code intelligence
+    [languages.rust.languageServer]
+    start = ["rust-analyzer"]
